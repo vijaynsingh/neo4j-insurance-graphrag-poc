@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neo4j Insurance GraphRAG Demo</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <h1>Neo4j Insurance GraphRAG Demo</h1>
+      <p>Ask an underwriting question and watch the full GraphRAG pipeline execute step by step.</p>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Pipeline overview -->
+    <div class="pipeline-strip">
+      <div class="pipeline-step">Question</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Vector Search</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Graph Traversal</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">LLM Reasoning</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step highlight">Decision</div>
+    </div>
+
+    <!-- Query input -->
+    <div class="card" id="query-card">
+      <label for="question" class="input-label">Underwriting question</label>
+      <textarea id="question" rows="3" spellcheck="false"></textarea>
+
+      <!-- Mode selector -->
+      <div class="mode-selector" role="radiogroup" aria-label="Pipeline mode">
+        <label class="mode-option">
+          <input type="radio" name="mode" value="demo" checked />
+          <span class="mode-label-text">
+            <strong>Demo Mode</strong>
+            <small>Mock embeddings · MockLLM</small>
+          </span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="openai" />
+          <span class="mode-label-text">
+            <strong>OpenAI Mode</strong>
+            <small>text-embedding-3-small · gpt-4o</small>
+          </span>
+        </label>
+      </div>
+
+      <div class="input-row">
+        <span class="hint">Ctrl+Enter to submit</span>
+        <button id="ask-btn">Ask →</button>
+      </div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="hidden">
+      <span class="spinner"></span> Running GraphRAG pipeline…
+    </div>
+
+    <!-- Error -->
+    <div id="error" class="hidden error-box"></div>
+
+    <!-- Results -->
+    <div id="results" class="hidden">
+
+      <!-- Provider bar — always shown with results -->
+      <div class="provider-bar">
+        Mode: <strong id="mode-display">—</strong>
+        <span class="provider-sep">·</span>
+        Embedding: <strong id="embedding-display">—</strong>
+        <span class="provider-sep">·</span>
+        LLM: <strong id="llm-display">—</strong>
+      </div>
+
+      <!-- Compatibility warning — only shown if auto-reseed failed -->
+      <div id="compat-warning" class="compat-warning hidden">
+        <strong>Embedding mismatch</strong> —
+        <span id="compat-warning-text"></span>
+      </div>
+
+      <!-- Reindex notice — shown once after automatic embedding switch -->
+      <div id="reindex-notice" class="reindex-notice hidden">
+        Embeddings automatically reindexed for <strong id="reindex-mode"></strong> mode.
+        Similarity scores are now semantically meaningful.
+      </div>
+
+      <!-- S1: Question -->
+      <div class="card">
+        <h2><span class="step-badge">Question</span></h2>
+        <p id="display-question" class="question-text"></p>
+      </div>
+
+      <!-- S2: Phase 1 — Vector retrieval -->
+      <div class="card">
+        <h2><span class="step-badge phase1">Phase 1</span> Vector Search</h2>
+        <p class="section-hint">
+          The question is embedded and compared against DocumentChunk vectors stored in
+          Neo4j's HNSW index. Top-k chunks with the highest cosine similarity are returned.
+        </p>
+        <div id="chunks-list"></div>
+      </div>
+
+      <!-- S3: Phase 2 — Graph traversal -->
+      <div class="card">
+        <h2><span class="step-badge phase2">Phase 2</span> Graph Traversal</h2>
+        <p class="section-hint">
+          Starting from the matched chunks, the graph is traversed outward:
+          <code>DocumentChunk ← SUPPORTED_BY ← UnderwritingRule ← EVALUATED_BY ← RiskFactor ← HAS_CONDITION ← Applicant</code>
+        </p>
+        <div id="graph-context"></div>
+      </div>
+
+      <!-- S4: Decision -->
+      <div class="card decision-card">
+        <h2><span class="step-badge result">Decision</span></h2>
+        <div id="decision-badge"></div>
+      </div>
+
+      <!-- S5: Reasoning -->
+      <div class="card">
+        <h2><span class="step-badge reasoning">Reasoning</span></h2>
+        <ol id="reasoning-list"></ol>
+      </div>
+
+      <!-- S6: Citations -->
+      <div class="card">
+        <h2><span class="step-badge citations">Citations</span></h2>
+        <p class="section-hint">Every statement is traceable to a specific graph node.</p>
+        <div id="citations-list"></div>
+      </div>
+
+    </div>
+  </main>
+
+  <footer>
+    <p>
+      Neo4j Insurance GraphRAG POC ·
+      <a href="/docs" target="_blank">API docs</a> ·
+      <a href="/health" target="_blank">/health</a>
+    </p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
