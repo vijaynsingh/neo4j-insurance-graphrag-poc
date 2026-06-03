@@ -436,6 +436,6 @@ app/
 data/
   underwriting_sample.json  — seed data source of truth (all nodes + relationships)
 ARCHITECTURE.md             — detailed design notes
-LEARNING_NOTES.md           — step-by-step theory + interview Q&A
+LEARNING_NOTES.md           — step-by-step theory + design Q&A
 CYPHER_QUERIES.md           — Cypher reference queries for each retrieval phase
 ```

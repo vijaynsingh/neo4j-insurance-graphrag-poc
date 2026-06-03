@@ -57,7 +57,7 @@ Steps follow the actual build sequence. Each step has a clear deliverable.
   - 3-branch decision logic: REFER_FOR_REVIEW / REQUIRE_ADDITIONAL_REVIEW / APPROVE
   - Builds citations: DocumentChunk sources + UnderwritingRule titles
 - `app/graphrag_pipeline.py` — `GraphRAGPipeline.run()` wires retriever → LLM
-- `LEARNING_NOTES.md` updated — Step 5 section, 5 interview Q&As
+- `LEARNING_NOTES.md` updated — Step 5 section, 5 design Q&As
 
 **Done:** `python3 -m app.graphrag_pipeline` prints decision, reasoning, and citations.
 
@@ -76,15 +76,15 @@ Steps follow the actual build sequence. Each step has a clear deliverable.
 
 ---
 
-## ✅ Step 7 — Project Cleanup for GitHub and Interview Readiness
+## ✅ Step 7 — Project Cleanup for GitHub and Documentation
 
 - `README.md` — concise, GitHub-ready with honest mock caveats
 - `ARCHITECTURE.md` — graph model, retrieval flow, mock components, production mapping
-- `DEMO_SCRIPT.md` — 2-minute interview talking track with anticipated Q&A
-- `LEARNING_NOTES.md` — organised by step, table of contents added, interview talking points
+- `DEMO_SCRIPT.md` — 2-minute technical walkthrough with anticipated Q&A
+- `LEARNING_NOTES.md` — organised by step, table of contents added, technical design notes
 - `TODO.md` — this file, reflecting actual build sequence
 
-**Done:** Project is interview-presentable. Clone → run → demo in under 5 minutes.
+**Done:** Project is presentation-ready. Clone → run → demo in under 5 minutes.
 
 ---
 
@@ -178,9 +178,9 @@ Note: Neo4j still runs via Docker Compose; this Dockerfile is for the Python API
 
 ---
 
-## Interview Talking Points
+## Design Considerations
 
-Use these to answer "tell me about a project you built recently."
+Key architectural decisions and trade-offs in this project.
 
 **What it is:**
 A GraphRAG system for insurance underwriting. Answers questions about whether an applicant

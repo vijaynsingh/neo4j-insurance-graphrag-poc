@@ -8,13 +8,13 @@ and building this POC step by step. Organised by build step.
 ## Contents
 
 - [Course Notes](#course-notes) — VectorRetriever, GraphRAG, Text2Cypher, comparison table
-- [Step 2 — Graph Schema](#step-2--graph-schema-and-seed-data) — graph model, relationship design, interview Q&A
-- [Step 3 — Vector Index](#step-3--vector-index-and-mock-embeddings) — embeddings, HNSW, similarity search, interview Q&A
-- [Step 4 — GraphRetriever](#step-4--graph-enhanced-retrieval) — two-phase retrieval, multi-hop, explainability, interview Q&A
-- [Step 5 — Answer Generation](#step-5--graphrag-answer-generation) — MockLLM, pipeline flow, citations, interview Q&A
-- [Step 6 — FastAPI](#step-6--fastapi-ask-endpoint) — lifespan pattern, error handling, enterprise integration, interview Q&A
-- [Step 8 — Real Embeddings and LLM](#step-8--real-embeddings-and-llm) — provider abstraction, embedding consistency, JSON mode, interview Q&A
-- [Interview Talking Points](#interview-talking-points) — ready-to-use answers
+- [Step 2 — Graph Schema](#step-2--graph-schema-and-seed-data) — graph model, relationship design, design Q&A
+- [Step 3 — Vector Index](#step-3--vector-index-and-mock-embeddings) — embeddings, HNSW, similarity search, design Q&A
+- [Step 4 — GraphRetriever](#step-4--graph-enhanced-retrieval) — two-phase retrieval, multi-hop, explainability, design Q&A
+- [Step 5 — Answer Generation](#step-5--graphrag-answer-generation) — MockLLM, pipeline flow, citations, design Q&A
+- [Step 6 — FastAPI](#step-6--fastapi-ask-endpoint) — lifespan pattern, error handling, enterprise integration, design Q&A
+- [Step 8 — Real Embeddings and LLM](#step-8--real-embeddings-and-llm) — provider abstraction, embedding consistency, JSON mode, design Q&A
+- [Design Considerations](#design-considerations) — key architectural decisions and trade-offs
 
 ---
 
@@ -118,7 +118,7 @@ use graph traversal to pull in their neighborhood. This is what GraphRAG does.
 
 ---
 
-## Interview Q&A
+## Frequently Asked Questions
 
 **Q: What is GraphRAG and how does it differ from RAG?**
 A: RAG retrieves chunks of text by embedding similarity and feeds them to an LLM.
@@ -231,7 +231,7 @@ and the graph connects them. Vector search finds the chunk; traversal finds the 
 
 ---
 
-## Interview Q&A — Step 2
+## Frequently Asked Questions — Step 2
 
 **Q: Why model underwriting as a graph instead of a table?**
 A: In underwriting, the decision is produced by traversing relationships — which applicant has
@@ -431,7 +431,7 @@ Each piece you built in Step 3 maps directly to a component in this pipeline:
 
 ---
 
-## Interview Q&A — Step 3
+## Frequently Asked Questions — Step 3
 
 **Q: What is an embedding and why is it needed for RAG?**
 A: An embedding is a fixed-length float vector that encodes the semantic meaning of text.
@@ -567,9 +567,9 @@ Hop 4: UnderwritingRule -[SUPPORTED_BY]→ DocumentChunk (manual text)
 This is a 4-hop traversal. No single text chunk contains all this information. The graph
 encodes it as structure, and Cypher traverses it in one query.
 
-**Why this matters for interviews:**
-Multi-hop reasoning is the core argument for using a knowledge graph over a vector store.
-It's the answer to: "Why not just embed all the documents and use a vector database?"
+**Why multi-hop reasoning matters:**
+Multi-hop reasoning is the core architectural argument for using a knowledge graph over a vector store.
+The key question is: "Why not just embed all the documents and use a vector database?"
 The answer is: "Because the question requires reasoning over relationships between entities,
 not just similarity between texts."
 
@@ -599,7 +599,7 @@ over pure vector stores in these domains.
 
 ---
 
-## Interview Q&A — Step 4
+## Frequently Asked Questions — Step 4
 
 **Q: Why not stop at vector search?**
 A: Vector search finds semantically similar text, but insurance underwriting decisions
@@ -720,7 +720,7 @@ This is explainable AI in practice: every sentence in the reasoning trace can be
 
 ---
 
-## Interview Q&A — Step 5
+## Frequently Asked Questions — Step 5
 
 **Q: What is GraphRAG?**
 A: GraphRAG is a retrieval-augmented generation pattern that replaces (or augments)
@@ -890,7 +890,7 @@ This is not the answer — it is metadata about the retrieval. It lets callers (
 
 ---
 
-## Interview Q&A — Step 6
+## Frequently Asked Questions — Step 6
 
 **Q: Why use FastAPI over Flask or Django for a GraphRAG service?**
 A: FastAPI is async-native (built on Starlette and ASGI), which matches well with I/O-bound
@@ -1079,7 +1079,7 @@ extraction.
 
 ---
 
-## Interview Q&A — Step 8
+## Frequently Asked Questions — Step 8
 
 **Q: How do you switch between mock and real embeddings without changing the pipeline?**
 A: Both providers implement the same two-method interface: `embed(text)` and `model_name`.
@@ -1111,7 +1111,7 @@ calls the provider's API and parses the response into the same dict shape as `Mo
 files change. The interface contract (same input, same output shape) is what makes the
 provider swappable.
 
-## Interview Talking Points
+## Design Considerations
 
 Quick-reference answers. Full narrative is in [DEMO_SCRIPT.md](DEMO_SCRIPT.md).
 
@@ -1132,7 +1132,7 @@ context to a decision layer (MockLLM in the POC, real LLM in production).
 > understand the pipeline architecture — the graph model, retrieval logic, and API
 > contract are production-equivalent. Replacing the mocks requires changing two functions."
 
-Land this proactively. Interviewers respect honesty about scope more than overselling.
+Being upfront about scope and limitations is more credible than overselling.
 
 ---
 

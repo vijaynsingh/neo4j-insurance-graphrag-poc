@@ -1,13 +1,13 @@
-# Demo Script — 2-Minute Interview Walkthrough
+# Demo Script — 2-Minute Technical Walkthrough
 
-A structured talking track for explaining this project in a technical interview.
+A structured talking track for presenting this project to a technical audience.
 Each section has a suggested time and the key point to land.
 
 ---
 
 ## Live Browser Demo (before the verbal walkthrough)
 
-Run this before the interview, or open a browser during a screen-share:
+Run this before a presentation, or open a browser during a screen-share:
 
 ```bash
 docker compose up -d
