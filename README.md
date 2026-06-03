@@ -5,11 +5,11 @@ underwriting, built step-by-step to understand the components of a production Gr
 
 **Stack:** Neo4j 5 · Python 3.11 · FastAPI · OpenAI · Neo4j Vector Indexes · Custom GraphRAG Pipeline
 
-> **Two modes, one pipeline.** In **Demo Mode**, embeddings are mock (SHA-256 hash → float
+> **Two modes, one pipeline.** In **Learning Mode**, embeddings are mock (SHA-256 hash → float
 > vector, not semantic) and decisions come from deterministic business logic — free, offline,
 > and zero-cost. In **OpenAI Mode**, `text-embedding-3-small` embeddings and `gpt-4o` reasoning
 > replace the mock components; the graph model, retrieval flow, and API contract are unchanged.
-> Both modes are intentional: Demo Mode lets you understand the pipeline without any API
+> Both modes are intentional: Learning Mode lets you understand the pipeline without any API
 > dependency; OpenAI Mode shows the same pipeline running with production-grade providers.
 
 ---
@@ -33,7 +33,7 @@ underwriting, built step-by-step to understand the components of a production Gr
 - **Vector Retrieval + Graph Traversal** — two-phase pipeline: HNSW similarity search followed by Cypher relationship traversal in one round-trip
 - **Explainable AI with Citations** — every decision links back to specific graph nodes: manual sections, rules, risk factors
 - **FastAPI Service Layer** — typed request/response models, lifespan-managed resources, structured error handling
-- **Provider Pattern (Demo vs OpenAI)** — strategy pattern so the pipeline never checks which provider is active; `for_mode()` classmethod handles wiring
+- **Provider Pattern (Learning Mode vs OpenAI Mode)** — strategy pattern so the pipeline never checks which provider is active; `for_mode()` classmethod handles wiring
 - **Embedding Consistency Validation** — stored `embedding_model` metadata detected and auto-reindexed when the mode changes
 - **Graph-Based Context Enrichment** — LLM receives structured entities and relationships, not raw text paragraphs
 
@@ -86,7 +86,7 @@ POST /ask  {"question": "...", "mode": "demo" | "openai"}
       │
       ▼
 FastAPI  app/main.py
-      │  (lifespan: one Neo4j driver + two pipelines — demo and openai)
+      │  (lifespan: one Neo4j driver + two pipelines — Learning Mode and OpenAI Mode)
       │
       ├── Auto-reindex (if stored embedding model ≠ requested mode's provider)
       │     reindex_embeddings(driver, provider)   ← only updates vectors, not graph
@@ -94,8 +94,8 @@ FastAPI  app/main.py
       │
       ▼
 GraphRAGPipeline  app/graphrag_pipeline.py
-      │  (selected by mode: demo → MockEmbeddingProvider + MockLLM
-      │                      openai → OpenAIEmbeddingProvider + OpenAILLM)
+      │  (Learning Mode → MockEmbeddingProvider + MockLLM
+      │   OpenAI Mode  → OpenAIEmbeddingProvider + OpenAILLM)
       │
       ├── Phase 1 — Vector search
       │     provider.embed(question) → db.index.vector.queryNodes()
@@ -138,11 +138,11 @@ the rule, rule links to the risk factor and applicant. No single text chunk cont
 Mode is selected **per request** in the browser UI (or via the `mode` field in the API).
 The server pre-creates both pipelines at startup and switches between them automatically.
 
-### Demo Mode (default — no API key needed)
+### Learning Mode (default — no API key needed)
 
 Mock embeddings (SHA-256 hash) + MockLLM (deterministic business logic). Free, offline, instant.
 
-Select **Demo** in the browser or pass `"mode": "demo"` in the request body.
+Select **Learning** in the browser or pass `"mode": "demo"` in the request body.
 
 ### OpenAI Mode (requires `OPENAI_API_KEY`)
 
@@ -171,10 +171,10 @@ python3 -m app.seed          # initial graph setup only — run once
 uvicorn app.main:app --port 8765 --reload
 ```
 
-Then open **http://127.0.0.1:8765** in your browser for the interactive demo UI.
+Then open **http://127.0.0.1:8765** in your browser for the interactive GraphRAG application.
 
-`python3 -m app.seed` is only needed once to populate the graph. Switching between Demo and
-OpenAI mode in the UI re-indexes embeddings automatically — no manual re-seed required.
+`python3 -m app.seed` is only needed once to populate the graph. Switching between Learning Mode and
+OpenAI Mode in the UI re-indexes embeddings automatically — no manual re-seed required.
 
 API docs (Swagger): http://127.0.0.1:8765/docs
 
@@ -182,9 +182,9 @@ API docs (Swagger): http://127.0.0.1:8765/docs
 
 ---
 
-## Browser Demo
+## Browser Application
 
-The root URL (`/`) serves a single-page demo that visualises every pipeline step:
+The root URL (`/`) serves a single-page application that visualises every pipeline step:
 
 | Section | What it shows |
 |---------|--------------|
@@ -208,44 +208,44 @@ No React. No build step. Plain HTML + CSS + JavaScript served by FastAPI.
 
 ![Knowledge Graph Model](docs/images/01-graph-model.png)
 
-Insurance underwriting knowledge graph showing applicants, policies, risk factors, underwriting rules, lab results, and supporting document evidence.
+Insurance underwriting knowledge graph showing the full entity schema — Applicant, Policy, RiskFactor, LabResult, UnderwritingRule, and DocumentChunk nodes connected by typed relationships (HAS_CONDITION, EVALUATED_BY, HAS_RULE, SUPPORTED_BY).
 
 ### 2. Interactive GraphRAG Application
 
 ![Interactive GraphRAG Application](docs/images/02-home.png)
 
-Browser-based GraphRAG application supporting Learning Mode with mock providers and OpenAI Mode with text-embedding-3-small and gpt-4o.
+Browser-based GraphRAG application showing the pipeline step indicator (Question → Vector Search → Graph Traversal → LLM Reasoning → Decision), underwriting question input, and mode selector with **Learning Mode** (mock embeddings · MockLLM) and **OpenAI Mode** (text-embedding-3-small · gpt-4o).
 
 ### 3. Retrieval Flow
 
 ![Retrieval Flow](docs/images/03-flow.png)
 
-End-to-end GraphRAG pipeline from question to embedding generation, Neo4j HNSW vector search, graph traversal, reasoning, and final decision.
+End-to-end pipeline diagram from question and execution mode (`"learning"` or `"openai"`) through auto-reindex check, embedding generation, Neo4j HNSW vector search, graph traversal, and LLM answer generation.
 
 ### 4. Phase 1 – Vector Search
 
-![Vector Search](docs/images/04-vector-search.png)
+![Phase 1 – Vector Search](docs/images/04-vector-search.png)
 
-Question embedding is compared against Neo4j HNSW vector indexes to retrieve the most relevant underwriting document chunks.
+Top-k DocumentChunk nodes retrieved from Neo4j's HNSW vector index by cosine similarity — Underwriting Manual v3.2 sections 6.3, 4.1, and 6.5 with scores of 0.823, 0.781, and 0.774 respectively.
 
 ### 5. Phase 2 – Graph Traversal
 
-![Graph Traversal](docs/images/05-graph-traversal.png)
+![Phase 2 – Graph Traversal](docs/images/05-graph-traversal.png)
 
-Matched document chunks are expanded through graph relationships to retrieve applicants, policies, risk factors, and underwriting rules.
+Structured context assembled from matched chunks via graph traversal: applicant John Smith (age 48), Preferred Term Life policy, two risk factors (Controlled A1C, Type 2 Diabetes), and three underwriting rules with their decision classifications.
 
 ### 6. Explainable Decision & Citations
 
-![Decision and Citations](docs/images/06-decision.png)
+![Explainable Decision & Citations](docs/images/06-decision.png)
 
-Grounded recommendation with transparent reasoning and traceable citations to both source documents and underwriting rules.
+REQUIRE ADDITIONAL REVIEW decision with step-by-step reasoning grounded in the retrieved graph context, and traceable citations linking each conclusion to specific DocumentChunk sources and UnderwritingRule nodes.
 
 ---
 
 ## Sample Request (curl)
 
 ```bash
-# Demo mode (default — no API key required)
+# Learning Mode (default — no API key required)
 curl -X POST http://127.0.0.1:8765/ask \
   -H "Content-Type: application/json" \
   -d '{"question":"Should a diabetic applicant with A1C below 7.0 qualify for preferred term life?","mode":"demo"}'
@@ -326,9 +326,9 @@ Interactive docs (Swagger UI): `http://127.0.0.1:8765/docs`
 
 ---
 
-## Components — Demo Mode vs OpenAI Mode
+## Components — Learning Mode vs OpenAI Mode
 
-| Component     | Demo Mode (default)                         | OpenAI Mode                              |
+| Component     | Learning Mode (default)                     | OpenAI Mode                              |
 |---------------|---------------------------------------------|------------------------------------------|
 | Embeddings    | SHA-256 hash → float[1536] (not semantic)   | `text-embedding-3-small` (semantic)      |
 | LLM           | Deterministic Python business logic         | `gpt-4o` reasoning over graph context   |
@@ -420,7 +420,7 @@ Insurance underwriting GraphRAG reference implementation using Neo4j, vector sea
 
 ```
 static/
-  index.html            — single-page demo UI
+  index.html            — single-page application UI
   styles.css            — no external CDN dependencies
   app.js                — fetch /ask, render each pipeline section
 app/

@@ -931,7 +931,7 @@ so the bottleneck in production will be the LLM API latency, not the graph retri
 ## What Changed in Step 8
 
 Updated files:
-- `app/config.py` — five new env vars: `OPENAI_API_KEY`, `USE_OPENAI_EMBEDDINGS`, `OPENAI_EMBEDDING_MODEL`, `USE_OPENAI_LLM`, `OPENAI_LLM_MODEL`
+- `app/config.py` — three env vars: `OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_LLM_MODEL`
 - `app/embed.py` — added `MockEmbeddingProvider`, `OpenAIEmbeddingProvider`, `get_embedding_provider()` factory; kept `mock_embed()` for backward compatibility
 - `app/seed.py` — uses `get_embedding_provider()` instead of `mock_embed()` directly; stores `embedding_model` and `embedding_provider` as properties on DocumentChunk nodes
 - `app/graph_retriever.py` — accepts `embedding_provider` parameter; adds `_check_embedding_compatibility()` warning
@@ -1121,7 +1121,7 @@ Quick-reference answers. Full narrative is in [DEMO_SCRIPT.md](DEMO_SCRIPT.md).
 
 A GraphRAG system for insurance underwriting. It answers underwriting questions by combining
 Neo4j vector similarity search with structured graph traversal, then feeding the assembled
-context to a decision layer (MockLLM in Demo Mode, real LLM in production).
+context to a decision layer (MockLLM in Learning Mode, real LLM in production).
 
 ---
 

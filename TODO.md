@@ -104,7 +104,7 @@ Steps follow the actual build sequence. Each step has a clear deliverable.
 
 ---
 
-## ✅ Step 9 — Browser Demo UI
+## ✅ Step 9 — Browser Application UI
 
 - `static/index.html` — pipeline overview strip, query textarea, 6 result sections
 - `static/styles.css` — no CDN dependencies; colour-coded decision badges, responsive grid
@@ -118,7 +118,7 @@ Steps follow the actual build sequence. Each step has a clear deliverable.
 
 ---
 
-## ✅ Step 10 — Demo Mode vs OpenAI Mode Selection + Auto-Reindex
+## ✅ Step 10 — Learning Mode vs OpenAI Mode Selection + Auto-Reindex
 
 **Mode selection:**
 - `app/graphrag_pipeline.py` — `__init__` accepts `embedding_provider` and `llm` params; `for_mode(driver, mode)` classmethod wires the correct providers (`MockEmbeddingProvider + MockLLM` for `"demo"`, `OpenAIEmbeddingProvider + OpenAILLM` for `"openai"`)

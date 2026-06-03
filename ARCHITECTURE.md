@@ -1,12 +1,12 @@
 # Architecture — Neo4j Insurance GraphRAG
 
-Design notes for the retrieval pipeline, graph model, API layer, and demo UI.
+Design notes for the retrieval pipeline, graph model, API layer, and browser application.
 
 ---
 
 ## UI Layer (Step 9)
 
-The demo UI (`static/index.html`, `styles.css`, `app.js`) is an intentionally thin
+The browser application (`static/index.html`, `styles.css`, `app.js`) is an intentionally thin
 visualisation layer. It has one job: call `POST /ask` and render the response sections
 in a way that makes the pipeline steps visible to a human.
 
@@ -23,7 +23,7 @@ Renders 6 sections:
 ```
 
 **Design constraints (deliberately kept):**
-- No React, no build tools, no npm — zero setup friction for a demo
+- No React, no build tools, no npm — zero setup friction for this application
 - No CDN dependencies — works fully offline once the server is running
 - No WebSockets — a simple fetch per question is sufficient for this application
 - `StaticFiles` mount at `/static`, `FileResponse` at `/` — two lines in FastAPI
@@ -31,14 +31,14 @@ Renders 6 sections:
 
 **What the UI does NOT do:**
 The UI is read-only. It does not write to the graph, does not manage sessions, and has
-no authentication. It is a demo tool, not a production UI. The API (`/ask`, `/health`)
+no authentication. It is a learning tool, not a production UI. The API (`/ask`, `/health`)
 is the production surface; the UI is optional scaffolding on top.
 
 **`/ask` response enrichment:**
 Fields added additively across Steps 9–10 (original fields are unchanged):
 - `matched_chunks: list[dict]` — full chunk data (id, source, text, score) for Phase 1 display
 - `graph_context: dict` — rules, risk\_factors, policies, applicants for Phase 2 display
-- `mode: str` — which pipeline ran (`"demo"` or `"openai"`)
+- `mode: str` — which pipeline ran (Learning Mode: `"demo"`, OpenAI Mode: `"openai"`)
 - `embedding_provider: str` — active embedding model name (`"mock"` or `"text-embedding-3-small"`)
 - `llm_provider: str` — active LLM class name (`"MockLLM"` or `"OpenAILLM"`)
 - `compatibility_warning: str | None` — set only if auto-reindex failed; null in normal operation
@@ -105,7 +105,7 @@ and structured.
 ## Retrieval Flow
 
 ```
-Question  +  mode ("demo" | "openai")
+Question  +  execution mode ("learning" | "openai")
   │
   ▼  auto-reindex check (if stored embedding_model ≠ provider.model_name)
      reindex_embeddings(driver, provider)   — re-embeds chunks, updates metadata
@@ -138,7 +138,7 @@ RETURN node.id AS id, node.source AS source, node.text AS text, score
 ```
 
 Returns the DocumentChunk nodes whose embeddings are closest to the query embedding.
-In Demo Mode, similarity scores cluster near 0.5 because mock embeddings are not semantic —
+In Learning Mode, similarity scores cluster near 0.5 because mock embeddings are not semantic —
 all hashes end up in roughly the same region of the 1536-dimensional space.
 
 In production, relevant chunks score near 1.0 and irrelevant ones score near 0.0.
@@ -178,8 +178,8 @@ provider.model_name                         # "mock" | "text-embedding-3-small"
 ```
 
 `GraphRAGPipeline.for_mode(driver, mode)` in `app/graphrag_pipeline.py` wires the correct
-provider for each mode — `MockEmbeddingProvider` for `"demo"`, `OpenAIEmbeddingProvider` for
-`"openai"`. The pipeline never checks env vars at query time; the mode parameter is explicit.
+provider for each mode — `MockEmbeddingProvider` for Learning Mode (`"demo"`), `OpenAIEmbeddingProvider` for
+OpenAI Mode (`"openai"`). The pipeline never checks env vars at query time; the mode parameter is explicit.
 
 **Embedding consistency — automatic from Step 10 onwards:**
 The model name is stored on every `DocumentChunk` node at seed time (`embedding_model` property).
@@ -204,7 +204,7 @@ llm.generate_answer(question: str, context: dict) -> dict
 ```
 
 `GraphRAGPipeline.for_mode(driver, mode)` returns the pipeline wired with the correct LLM:
-`MockLLM` for `"demo"`, `OpenAILLM` for `"openai"`. The pipeline, API response shape, and
+`MockLLM` for Learning Mode (`"demo"`), `OpenAILLM` for OpenAI Mode (`"openai"`). The pipeline, API response shape, and
 citation format are identical in both modes.
 
 `OpenAILLM` uses `response_format={"type": "json_object"}` (JSON mode) so the response
@@ -312,7 +312,7 @@ automatically re-indexed before the query ran.
 
 ## How This Maps to Production GraphRAG
 
-| Demo Mode | OpenAI Mode | Production |
+| Learning Mode | OpenAI Mode | Production |
 |-----------|-------------|------------|
 | `MockEmbeddingProvider` — SHA-256 hash | `OpenAIEmbeddingProvider` — `text-embedding-3-small` | Same as OpenAI Mode, or self-hosted model |
 | `MockLLM` — Python decision tree | `OpenAILLM` — gpt-4o with JSON mode | enterprise-approved LLM |
@@ -321,7 +321,7 @@ automatically re-indexed before the query ran.
 | No auth | Same | JWT / API key via FastAPI `Depends()` |
 | stdout logging | Same | Structured JSON logs + `retrieval_summary` metrics |
 
-Mode B is already implemented. Switching requires only `OPENAI_API_KEY` in `.env`; embeddings
+OpenAI Mode is already implemented. Switching requires only `OPENAI_API_KEY` in `.env`; embeddings
 re-index automatically on the first request in that mode. The graph schema, traversal query,
 context assembly, and API contract are unchanged across all three columns.
 The production path is a substitution, not a rewrite.

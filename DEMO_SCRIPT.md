@@ -1,11 +1,11 @@
-# Demo Script — 2-Minute Technical Walkthrough
+# Technical Walkthrough — 2 Minutes
 
 A structured talking track for presenting this project to a technical audience.
 Each section has a suggested time and the key point to land.
 
 ---
 
-## Live Browser Demo (before the verbal walkthrough)
+## Live Browser Application (before the verbal walkthrough)
 
 Run this before a presentation, or open a browser during a screen-share:
 
@@ -16,12 +16,12 @@ uvicorn app.main:app --port 8765 --reload
 open http://127.0.0.1:8765
 ```
 
-**Demo flow — 60 seconds in the browser:**
+**Browser walkthrough — 60 seconds:**
 
-1. **Show the mode selector.** Point out the two options: Demo Mode (mock, free) and OpenAI Mode (real embeddings + gpt-4o).
-   *"The selector controls which embedding provider and LLM the pipeline uses for this request. Demo Mode is the default — zero cost, no API key needed."*
+1. **Show the mode selector.** Point out the two options: Learning Mode (mock, free) and OpenAI Mode (real embeddings + gpt-4o).
+   *"The selector controls which embedding provider and LLM the pipeline uses for this request. Learning Mode is the default — zero cost, no API key needed."*
 
-2. **Leave Demo Mode selected. Click Ask.** While it loads: *"It's hitting a FastAPI endpoint, which calls GraphRetriever, then a decision layer."*
+2. **Leave Learning Mode selected. Click Ask.** While it loads: *"It's hitting a FastAPI endpoint, which calls GraphRetriever, then a decision layer."*
 
 3. **Provider bar:** Point to the bar that appears above the results.
    *"This confirms which providers ran — Embedding: mock, LLM: MockLLM. Now switch to OpenAI Mode and click Ask again."*

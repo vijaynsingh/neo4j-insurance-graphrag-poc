@@ -172,7 +172,7 @@ The LLM receives not just the chunk text but the entire structured context —
 applicant profile, lab result, risk factors, and the rule decision — all from
 a single vector hit + graph traversal.
 
-**Interview summary:**
+**GraphRAG summary:**
 > "The DocumentChunk nodes are semantic entry points into the graph. Vector search
 > finds the relevant chunk; the graph provides the structured reasoning context
 > around it. Together they enable multi-hop, explainable answers that neither
@@ -378,4 +378,4 @@ RETURN
     [x IN (collect(DISTINCT a_cond) + collect(DISTINCT a_pol)) WHERE x IS NOT NULL | x.name] AS applicants
 ```
 
-This is the query to study when preparing to explain GraphRAG retrieval in an interview.
+This is the query to study when preparing to explain GraphRAG retrieval and graph-based context assembly.
