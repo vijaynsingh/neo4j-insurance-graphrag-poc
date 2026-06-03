@@ -220,7 +220,8 @@ function renderCitations(citations) {
 
 // Provider bar
 function renderProviderBar(data) {
-  document.getElementById('mode-display').textContent      = data.mode || 'demo';
+  const modeLabel = data.mode === 'openai' ? 'OpenAI' : 'Learning';
+  document.getElementById('mode-display').textContent      = modeLabel;
   document.getElementById('embedding-display').textContent = data.embedding_provider || '—';
   document.getElementById('llm-display').textContent       = data.llm_provider || '—';
 }
@@ -240,7 +241,7 @@ function renderCompatWarning(warning) {
 function renderReindexNotice(data) {
   const el = document.getElementById('reindex-notice');
   if (data.reindexed) {
-    const modeLabel = data.mode === 'openai' ? 'OpenAI' : 'Demo';
+    const modeLabel = data.mode === 'openai' ? 'OpenAI' : 'Learning';
     document.getElementById('reindex-mode').textContent = modeLabel;
     show(el);
   } else {
@@ -288,7 +289,7 @@ function setLoading(on, mode) {
   askBtn.disabled = on;
   askBtn.textContent = on ? 'Running…' : 'Ask →';
   if (on) {
-    const modeLabel = mode === 'openai' ? 'OpenAI' : 'Demo';
+    const modeLabel = mode === 'openai' ? 'OpenAI' : 'Learning';
     loadingEl.innerHTML =
       `<span class="spinner"></span> Running ${modeLabel} pipeline` +
       (mode === 'openai' ? ' <span class="loading-hint">(first switch re-indexes embeddings)</span>' : '') +

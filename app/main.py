@@ -153,7 +153,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "neo4j-insurance-graphrag-poc"}
+    return {"status": "ok", "service": "neo4j-insurance-graphrag"}
 
 
 @app.post("/ask", response_model=AskResponse)

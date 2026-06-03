@@ -1,7 +1,7 @@
-# Learning Notes — Neo4j Insurance GraphRAG POC
+# Learning Notes — Neo4j Insurance GraphRAG
 
 Personal notes from completing the Neo4j & GenerativeAI Fundamentals course
-and building this POC step by step. Organised by build step.
+and building this project step by step. Organised by build step.
 
 ---
 
@@ -757,7 +757,7 @@ context the system used. There is no black-box step — the retrieval is auditab
 the reasoning is explicit code (or, with a real LLM, an explicit prompt with structured
 input), and the citations link back to the authoritative source documents.
 
-**Q: How would production GraphRAG differ from this POC?**
+**Q: How would production GraphRAG differ from this project?**
 A: Four main differences:
 1. **Real embeddings** — `mock_embed()` is replaced by a model like `text-embedding-3-small`.
    The vector search then returns semantically relevant chunks, not hash-based noise.
@@ -1121,13 +1121,13 @@ Quick-reference answers. Full narrative is in [DEMO_SCRIPT.md](DEMO_SCRIPT.md).
 
 A GraphRAG system for insurance underwriting. It answers underwriting questions by combining
 Neo4j vector similarity search with structured graph traversal, then feeding the assembled
-context to a decision layer (MockLLM in the POC, real LLM in production).
+context to a decision layer (MockLLM in Demo Mode, real LLM in production).
 
 ---
 
 ### Honest scope statement
 
-> "This is a learning POC. The embeddings are hash-based and not semantic. The LLM is
+> "This is a learning project. The embeddings are hash-based and not semantic. The LLM is
 > deterministic business logic. The seed data covers one applicant. I built it to
 > understand the pipeline architecture — the graph model, retrieval logic, and API
 > contract are production-equivalent. Replacing the mocks requires changing two functions."

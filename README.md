@@ -1,4 +1,4 @@
-# Neo4j Insurance GraphRAG POC
+# Neo4j Insurance GraphRAG
 
 A learning project demonstrating Graph-augmented Retrieval (GraphRAG) for insurance
 underwriting, built step-by-step to understand the components of a production GraphRAG system.
@@ -188,7 +188,7 @@ The root URL (`/`) serves a single-page demo that visualises every pipeline step
 
 | Section | What it shows |
 |---------|--------------|
-| Mode selector | Choose Demo Mode (mock, free) or OpenAI Mode (real embeddings + gpt-4o) |
+| Mode selector | Choose Learning Mode (mock, free) or OpenAI Mode (real embeddings + gpt-4o) |
 | Provider bar | Active embedding model and LLM class shown after every query |
 | Auto-reindex notice (green) | Appears once when embeddings were automatically re-indexed for the selected mode |
 | Embedding mismatch warning (amber) | Appears only if auto-reindex failed (e.g. network error during OpenAI call) |
@@ -210,17 +210,17 @@ No React. No build step. Plain HTML + CSS + JavaScript served by FastAPI.
 
 Insurance underwriting knowledge graph showing applicants, policies, risk factors, underwriting rules, lab results, and supporting document evidence.
 
-### 2. Interactive Demo
+### 2. Interactive GraphRAG Application
 
-![Interactive Demo](docs/images/02-home.png)
+![Interactive GraphRAG Application](docs/images/02-home.png)
 
-Browser-based GraphRAG application supporting both deterministic Demo Mode and OpenAI Mode.
+Browser-based GraphRAG application supporting Learning Mode with mock providers and OpenAI Mode with text-embedding-3-small and gpt-4o.
 
 ### 3. Retrieval Flow
 
 ![Retrieval Flow](docs/images/03-flow.png)
 
-End-to-end GraphRAG pipeline from question to embedding generation, vector search, graph traversal, reasoning, and final decision.
+End-to-end GraphRAG pipeline from question to embedding generation, Neo4j HNSW vector search, graph traversal, reasoning, and final decision.
 
 ### 4. Phase 1 – Vector Search
 
@@ -397,7 +397,7 @@ Recommended values for GitHub repository settings (copy directly):
 
 **Description:**
 ```
-Insurance underwriting GraphRAG POC using Neo4j, vector search, graph traversal, OpenAI embeddings, and explainable AI citations.
+Insurance underwriting GraphRAG reference implementation using Neo4j, vector search, graph traversal, OpenAI embeddings, and explainable AI citations.
 ```
 
 **Topics:**

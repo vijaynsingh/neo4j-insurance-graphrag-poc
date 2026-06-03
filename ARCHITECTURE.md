@@ -1,4 +1,4 @@
-# Architecture — Neo4j Insurance GraphRAG POC
+# Architecture — Neo4j Insurance GraphRAG
 
 Design notes for the retrieval pipeline, graph model, API layer, and demo UI.
 
@@ -25,7 +25,7 @@ Renders 6 sections:
 **Design constraints (deliberately kept):**
 - No React, no build tools, no npm — zero setup friction for a demo
 - No CDN dependencies — works fully offline once the server is running
-- No WebSockets — a simple fetch per question is enough for a POC
+- No WebSockets — a simple fetch per question is sufficient for this application
 - `StaticFiles` mount at `/static`, `FileResponse` at `/` — two lines in FastAPI
 - `aiofiles` is the only new dependency; it is required by FastAPI's `StaticFiles`
 
@@ -138,7 +138,7 @@ RETURN node.id AS id, node.source AS source, node.text AS text, score
 ```
 
 Returns the DocumentChunk nodes whose embeddings are closest to the query embedding.
-In this POC, similarity scores cluster near 0.5 because mock embeddings are not semantic —
+In Demo Mode, similarity scores cluster near 0.5 because mock embeddings are not semantic —
 all hashes end up in roughly the same region of the 1536-dimensional space.
 
 In production, relevant chunks score near 1.0 and irrelevant ones score near 0.0.
@@ -328,7 +328,7 @@ The production path is a substitution, not a rewrite.
 
 ---
 
-## Limitations of This POC
+## Known Limitations
 
 1. **Mock embeddings are not semantic.** Similarity scores cluster near 0.5. The pipeline
    retrieves chunks, but not necessarily the *most relevant* ones. Step ordering in output

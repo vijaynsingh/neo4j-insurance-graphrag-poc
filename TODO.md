@@ -1,4 +1,4 @@
-# Build Plan — Neo4j Insurance GraphRAG POC
+# Build Plan — Neo4j Insurance GraphRAG
 
 Steps follow the actual build sequence. Each step has a clear deliverable.
 
@@ -208,5 +208,5 @@ are the hard part, and they are done.
 
 **Honest limitations to volunteer:**
 The embeddings are hash-based and not semantic. The LLM is deterministic business logic.
-The seed data covers one applicant. These are intentional choices for a learning POC —
+The seed data covers one applicant. These are intentional choices for this learning project —
 they let me focus on understanding the pipeline structure without API dependencies or cost.
