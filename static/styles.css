@@ -45,6 +45,20 @@ header {
   padding: 0 20px;
 }
 
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+.header-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
 header h1 {
   color: #f8fafc;
   font-size: 1.4rem;
@@ -519,3 +533,191 @@ footer {
 
 footer a { color: var(--accent); text-decoration: none; }
 footer a:hover { text-decoration: underline; }
+
+/* ── Text2Cypher mode ───────────────────────────────────────── */
+
+/* Step badge variant for text2cypher sections */
+.step-badge.t2c-step { background: #fce7f3; color: #9d174d; }
+
+/* Example question hints below the mode selector */
+.t2c-hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 2px;
+  padding: 10px 12px;
+  background: #fdf4ff;
+  border: 1px solid #e9d5ff;
+  border-radius: var(--radius-sm);
+}
+
+.t2c-hint-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #7c3aed;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.t2c-example {
+  font-size: 0.78rem;
+  color: #6d28d9;
+  background: #ede9fe;
+  border: 1px solid #c4b5fd;
+  border-radius: 20px;
+  padding: 3px 11px;
+  cursor: pointer;
+  transition: background 0.12s;
+  font-family: inherit;
+}
+
+.t2c-example:hover { background: #ddd6fe; }
+
+/* Auto Mode router example hints */
+.auto-hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 2px;
+  padding: 10px 12px;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: var(--radius-sm);
+}
+
+.auto-hint-label {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.auto-example-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.auto-example-type {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #3b82f6;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-left: 4px;
+}
+
+.auto-example {
+  font-size: 0.78rem;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  border-radius: 20px;
+  padding: 3px 11px;
+  cursor: pointer;
+  transition: background 0.12s;
+  font-family: inherit;
+  text-align: left;
+}
+
+.auto-example:hover { background: #bfdbfe; }
+
+/* Generated Cypher block */
+.cypher-block {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+
+/* Raw query results container */
+.raw-results {
+  overflow-x: auto;
+}
+
+/* Raw results table */
+.raw-results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.raw-results-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 6px 12px 6px 0;
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+}
+
+.raw-results-table td {
+  padding: 7px 12px 7px 0;
+  border-bottom: 1px solid #f3f4f6;
+  color: #1e293b;
+  vertical-align: top;
+  max-width: 380px;
+  word-break: break-word;
+}
+
+.raw-results-table tr:last-child td { border-bottom: none; }
+
+.raw-results-table tbody tr:hover td { background: #f9fafb; }
+
+/* ── Auto / Router mode ─────────────────────────────────────── */
+.router-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 0.84rem;
+  color: #1e3a8a;
+  line-height: 1.5;
+}
+
+.router-callout-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: #2563eb;
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+
+.strategy-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  flex-shrink: 0;
+  margin-top: 1px;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}

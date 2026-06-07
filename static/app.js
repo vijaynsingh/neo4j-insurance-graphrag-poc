@@ -1,7 +1,23 @@
 'use strict';
 
-const DEFAULT_QUESTION =
-  'Should a diabetic applicant with A1C below 7.0 qualify for preferred term life?';
+const MODE_FIRST_EXAMPLES = {
+  demo:        'Should a diabetic applicant with A1C below 7.0 qualify for preferred term life?',
+  openai:      'Should a diabetic applicant with A1C below 7.0 qualify for preferred term life?',
+  text2cypher: 'Which underwriting rules apply to John Smith?',
+  auto:        'Should a diabetic applicant with A1C below 7.0 qualify for preferred term life?',
+};
+
+const ALL_KNOWN_SAMPLES = new Set([
+  'Should a diabetic applicant with A1C below 7.0 qualify for preferred term life?',
+  'How does controlled diabetes affect preferred underwriting?',
+  'What role does tobacco use play in the risk profile?',
+  'Explain how controlled diabetes affects preferred underwriting.',
+  'What does the underwriting manual say about tobacco use?',
+  'Which underwriting rules apply to John Smith?',
+  'What risk factors does John Smith have?',
+  'What policy is John Smith applying for?',
+  "Based on John Smith's profile and underwriting rules, what is your recommendation?",
+]);
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const questionEl  = document.getElementById('question');
@@ -11,13 +27,28 @@ const errorEl     = document.getElementById('error');
 const resultsEl   = document.getElementById('results');
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-questionEl.value = DEFAULT_QUESTION;
+questionEl.value = MODE_FIRST_EXAMPLES.demo;
 
 askBtn.addEventListener('click', runQuery);
 
 questionEl.addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runQuery();
 });
+
+document.querySelectorAll('input[name="mode"]').forEach(r =>
+  r.addEventListener('change', onModeChange)
+);
+
+// One delegated listener covers all four hint strips
+document.getElementById('query-card').addEventListener('click', e => {
+  if (e.target.classList.contains('auto-example') ||
+      e.target.classList.contains('t2c-example')) {
+    questionEl.value = e.target.textContent;
+  }
+});
+
+// Show the correct strip for the default selected mode on page load
+onModeChange();
 
 // ── Main query flow ───────────────────────────────────────────────────────────
 async function runQuery() {
@@ -56,15 +87,38 @@ async function runQuery() {
 
 // ── Render all sections ───────────────────────────────────────────────────────
 function render(data) {
+  const isT2C  = data.mode === 'text2cypher';
+  const isAuto = data.mode === 'auto';
+  const strategy = data.selected_strategy; // "openai_graph" | "text2cypher" | "hybrid" | undefined
+
   renderProviderBar(data);
   renderCompatWarning(data.compatibility_warning);
   renderReindexNotice(data);
+  renderRouterReason(data);
   renderQuestion(data.question);
-  renderChunks(data.matched_chunks || []);
-  renderGraphContext(data.graph_context || {});
-  renderDecision(data.decision);
+
+  const showGraphRAG = !isT2C && (!isAuto || strategy === 'openai_graph' || strategy === 'hybrid');
+  const showT2C      = isT2C  || (isAuto && (strategy === 'text2cypher' || strategy === 'hybrid'));
+
+  showEl('phase1-card',      showGraphRAG);
+  showEl('phase2-card',      showGraphRAG);
+  showEl('decision-card',    showGraphRAG);
+  showEl('citations-card',   showGraphRAG);
+  showEl('t2c-cypher-card',  showT2C);
+  showEl('t2c-results-card', showT2C);
+
+  const pureT2C = isT2C || (isAuto && strategy === 'text2cypher');
+  document.getElementById('reasoning-badge').textContent = pureT2C ? 'Answer' : 'Reasoning';
+
+  if (showT2C)      renderText2Cypher(data);
+  if (showGraphRAG) {
+    renderChunks(data.matched_chunks || []);
+    renderGraphContext(data.graph_context || {});
+    renderDecision(data.decision);
+    renderCitations(data.citations || []);
+  }
+
   renderReasoning(data.reasoning || []);
-  renderCitations(data.citations || []);
 }
 
 // Section 1 — Question
@@ -220,10 +274,37 @@ function renderCitations(citations) {
 
 // Provider bar
 function renderProviderBar(data) {
-  const modeLabel = data.mode === 'openai' ? 'OpenAI' : 'Learning';
-  document.getElementById('mode-display').textContent      = modeLabel;
-  document.getElementById('embedding-display').textContent = data.embedding_provider || '—';
-  document.getElementById('llm-display').textContent       = data.llm_provider || '—';
+  const modeLabels = { openai: 'OpenAI', text2cypher: 'Text2Cypher', demo: 'Learning', auto: 'Auto' };
+  document.getElementById('mode-display').textContent = modeLabels[data.mode] || 'Learning';
+
+  const isAuto = data.mode === 'auto';
+
+  // Toggle standard vs auto fields
+  showEl('std-embedding-sep',   !isAuto);
+  showEl('std-embedding-group', !isAuto);
+  showEl('std-llm-sep',         !isAuto);
+  showEl('std-llm-group',       !isAuto);
+  showEl('auto-router-sep',     isAuto);
+  showEl('auto-router-group',   isAuto);
+
+  const hasSelected = isAuto && !!data.selected_strategy;
+  showEl('auto-selected-sep',   hasSelected);
+  showEl('auto-selected-group', hasSelected);
+
+  if (!isAuto) {
+    document.getElementById('embedding-display').textContent = data.embedding_provider || '—';
+    document.getElementById('llm-display').textContent       = data.llm_provider || '—';
+  }
+  if (hasSelected) {
+    document.getElementById('auto-selected-display').textContent = data.selected_strategy;
+  }
+
+  const hasStrategy = !!data.retrieval_strategy && !isAuto;
+  showEl('strategy-sep',   hasStrategy);
+  showEl('strategy-label', hasStrategy);
+  if (hasStrategy) {
+    document.getElementById('strategy-display').textContent = data.retrieval_strategy;
+  }
 }
 
 // Compatibility warning — only shown if auto-reseed failed
@@ -241,12 +322,90 @@ function renderCompatWarning(warning) {
 function renderReindexNotice(data) {
   const el = document.getElementById('reindex-notice');
   if (data.reindexed) {
-    const modeLabel = data.mode === 'openai' ? 'OpenAI' : 'Learning';
-    document.getElementById('reindex-mode').textContent = modeLabel;
+    const modeLabels = { openai: 'OpenAI', text2cypher: 'Text2Cypher', demo: 'Learning', auto: 'Auto' };
+    document.getElementById('reindex-mode').textContent = modeLabels[data.mode] || 'Learning';
     show(el);
   } else {
     hide(el);
   }
+}
+
+// Router reason callout — auto mode only
+function renderRouterReason(data) {
+  const box = document.getElementById('router-reason-box');
+  if (data.mode === 'auto' && data.router_reason) {
+    document.getElementById('router-selected-badge').textContent = data.selected_strategy || '—';
+    document.getElementById('router-reason-text').textContent    = data.router_reason;
+    show(box);
+  } else {
+    hide(box);
+  }
+}
+
+// ── Mode hint strips ──────────────────────────────────────────────────────────
+function getSelectedMode() {
+  return document.querySelector('input[name="mode"]:checked')?.value || 'demo';
+}
+
+function onModeChange() {
+  const mode = getSelectedMode();
+
+  const q = questionEl.value.trim();
+  if (ALL_KNOWN_SAMPLES.has(q)) {
+    questionEl.value = MODE_FIRST_EXAMPLES[mode] || q;
+  }
+
+  showEl('demo-hints',   mode === 'demo');
+  showEl('openai-hints', mode === 'openai');
+  showEl('t2c-hints',    mode === 'text2cypher');
+  showEl('auto-hints',   mode === 'auto');
+}
+
+function renderText2Cypher(data) {
+  document.getElementById('t2c-cypher-block').textContent =
+    data.generated_cypher || '(no query generated)';
+  renderRawResults(data.raw_query_results || []);
+}
+
+function renderRawResults(records) {
+  const container = document.getElementById('t2c-results-body');
+  container.innerHTML = '';
+
+  if (!records.length) {
+    container.appendChild(emptyState('No records returned.'));
+    return;
+  }
+
+  const keys = Object.keys(records[0]);
+  if (!keys.length) {
+    container.appendChild(emptyState('Records returned no columns.'));
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'raw-results-table';
+
+  const thead = table.createTHead();
+  const hrow  = thead.insertRow();
+  keys.forEach(k => {
+    const th = document.createElement('th');
+    th.textContent = k;
+    hrow.appendChild(th);
+  });
+
+  const tbody = table.createTBody();
+  records.forEach(rec => {
+    const row = tbody.insertRow();
+    keys.forEach(k => {
+      const td  = row.insertCell();
+      const val = rec[k];
+      td.textContent = val == null ? '—'
+        : typeof val === 'object' ? JSON.stringify(val)
+        : String(val);
+    });
+  });
+
+  container.appendChild(table);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -289,11 +448,13 @@ function setLoading(on, mode) {
   askBtn.disabled = on;
   askBtn.textContent = on ? 'Running…' : 'Ask →';
   if (on) {
-    const modeLabel = mode === 'openai' ? 'OpenAI' : 'Learning';
+    const modeLabels = { openai: 'OpenAI', text2cypher: 'Text2Cypher', demo: 'Learning', auto: 'Auto' };
+    const modeLabel  = modeLabels[mode] || 'Learning';
+    const hint = mode === 'openai'
+      ? ' <span class="loading-hint">(first switch re-indexes embeddings)</span>'
+      : '';
     loadingEl.innerHTML =
-      `<span class="spinner"></span> Running ${modeLabel} pipeline` +
-      (mode === 'openai' ? ' <span class="loading-hint">(first switch re-indexes embeddings)</span>' : '') +
-      '…';
+      `<span class="spinner"></span> Running ${modeLabel} pipeline${hint}…`;
     show(loadingEl);
   } else {
     hide(loadingEl);
@@ -310,5 +471,8 @@ function clearError() {
   hide(errorEl);
 }
 
+function showEl(id, visible) {
+  document.getElementById(id).classList.toggle('hidden', !visible);
+}
 function show(el) { el.classList.remove('hidden'); }
 function hide(el) { el.classList.add('hidden'); }

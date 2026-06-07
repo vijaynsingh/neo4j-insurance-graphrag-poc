@@ -1,26 +1,41 @@
 # Neo4j Insurance GraphRAG
 
-A learning project demonstrating Graph-augmented Retrieval (GraphRAG) for insurance
-underwriting, built step-by-step to understand the components of a production GraphRAG system.
+A reference implementation demonstrating Graph-augmented Retrieval (GraphRAG) for insurance
+underwriting using Neo4j, vector search, and multiple retrieval strategies over a shared knowledge graph.
 
 **Stack:** Neo4j 5 · Python 3.11 · FastAPI · OpenAI · Neo4j Vector Indexes · Custom GraphRAG Pipeline
 
-> **Two modes, one pipeline.** In **Learning Mode**, embeddings are mock (SHA-256 hash → float
-> vector, not semantic) and decisions come from deterministic business logic — free, offline,
-> and zero-cost. In **OpenAI Mode**, `text-embedding-3-small` embeddings and `gpt-4o` reasoning
-> replace the mock components; the graph model, retrieval flow, and API contract are unchanged.
-> Both modes are intentional: Learning Mode lets you understand the pipeline without any API
-> dependency; OpenAI Mode shows the same pipeline running with production-grade providers.
+> **Four modes, one graph.**
+>
+> This project demonstrates how multiple retrieval strategies can operate against the same Neo4j knowledge graph while sharing a common API contract and domain model.
+>
+> - **Learning Mode** — Mock embeddings and deterministic business logic. Runs completely offline with zero API cost.
+> - **OpenAI Mode** — Uses `text-embedding-3-small` embeddings and `gpt-4o` reasoning while preserving the same graph model and response structure.
+> - **Text2Cypher Mode** — GPT-4o generates read-only Cypher, Neo4j executes the query, and GPT-4o synthesizes a final answer. Best suited for structured entity lookups.
+> - **Auto Mode** — GPT-4o classifies the question and selects the most appropriate retrieval strategy:
+>
+>   - `openai_graph` — vector search + graph traversal
+>   - `text2cypher` — structured graph lookup
+>   - `hybrid` — GraphRAG and Text2Cypher executed in parallel with answer synthesis
+>
+> The router's decision (`selected_strategy`) and explanation (`router_reason`) are returned in the API response for full transparency.
 
 ---
 
 ## What This Demonstrates
 
-- Modelling an insurance underwriting domain as a Neo4j knowledge graph
+- GraphRAG retrieval: two-phase vector similarity search followed by structured graph traversal
+- Text2Cypher retrieval: natural language to Cypher generation for structured graph lookups
+- Auto routing: GPT-4o router selects the best retrieval strategy per question at runtime
+- Hybrid retrieval: vector+graph and Text2Cypher run in parallel with synthesized results
+- Explainable citations: every decision traces to specific graph nodes — rules, risk factors, manual sections
+- Generated Cypher returned in the API response for full auditability of Text2Cypher queries
 - Neo4j HNSW vector indexes for semantic similarity retrieval
-- Two-phase retrieval: vector similarity search → structured graph traversal
+- GPT-4o integration for embeddings, LLM reasoning, and router classification
+- Automatic embedding re-indexing when switching between Learning Mode and OpenAI Mode
+- Retrieval strategy selection: four modes selectable per request via the API or browser UI
+- Modelling an insurance underwriting domain as a Neo4j knowledge graph
 - How graph context (rules, risk factors, policies, applicants) enriches what the LLM receives
-- Why GraphRAG produces more explainable answers than flat vector RAG
 - How to expose a retrieval pipeline as a typed, error-handled REST API
 
 ---
@@ -36,6 +51,9 @@ underwriting, built step-by-step to understand the components of a production Gr
 - **Provider Pattern (Learning Mode vs OpenAI Mode)** — strategy pattern so the pipeline never checks which provider is active; `for_mode()` classmethod handles wiring
 - **Embedding Consistency Validation** — stored `embedding_model` metadata detected and auto-reindexed when the mode changes
 - **Graph-Based Context Enrichment** — LLM receives structured entities and relationships, not raw text paragraphs
+- **Text2Cypher Pattern** — GPT-4o translates natural language to read-only Cypher; result records become structured context for a final answer; guardrails prevent write operations
+- **Router-Based Retrieval Orchestration** — GPT-4o zero-shot classification chooses `openai_graph`, `text2cypher`, or `hybrid` per question; router choice and reason returned in the response
+- **Hybrid Retrieval** — both vector+graph and Text2Cypher retrievers run for entity-specific recommendation questions; GPT-4o synthesizes a single answer from both result sets
 
 ---
 
@@ -66,14 +84,14 @@ No single text chunk contains all of this. A vector store would require multiple
 
 **What this adds over vector-only RAG:**
 
-| Property | Vector-only RAG | GraphRAG (this project) |
-|----------|----------------|------------------------|
-| Retrieval unit | Text chunk | Graph path (chunk → rule → risk factor → applicant) |
-| Entity awareness | Inferred from text | Explicit node properties |
-| Scope | All similar text | Only rules for the relevant policy |
-| Multi-hop reasoning | Not supported | Native — any depth via Cypher |
-| Citations | Source document | Specific rule, risk factor, and manual section |
-| Explainability | "The manual says…" | Traceable graph path per decision |
+| Property              | Vector-only RAG    | GraphRAG (this project)                             |
+| --------------------- | ------------------ | --------------------------------------------------- |
+| Retrieval unit        | Text chunk         | Graph path (chunk → rule → risk factor → applicant) |
+| Entity awareness      | Inferred from text | Explicit node properties                            |
+| Scope                 | All similar text   | Only rules for the relevant policy                  |
+| Multi-hop reasoning   | Not supported      | Native — any depth via Cypher                       |
+| Citations             | Source document    | Specific rule, risk factor, and manual section      |
+| Explainability        | "The manual says…" | Traceable graph path per decision                   |
 
 In regulated industries, the ability to reproduce *exactly* what the system saw — and which rule triggered which decision — is not a nice-to-have. Neo4j makes that auditability structural rather than bolted on.
 
@@ -81,44 +99,63 @@ In regulated industries, the ability to reproduce *exactly* what the system saw 
 
 ## Architecture
 
-```
-POST /ask  {"question": "...", "mode": "demo" | "openai"}
+```text
+POST /ask  {"question": "...", "mode": "demo"|"openai"|"text2cypher"|"auto"}
       │
       ▼
 FastAPI  app/main.py
-      │  (lifespan: one Neo4j driver + two pipelines — Learning Mode and OpenAI Mode)
+      │  (lifespan: one Neo4j driver, pipelines for available modes, asyncio.Lock)
       │
       ├── Auto-reindex (if stored embedding model ≠ requested mode's provider)
-      │     reindex_embeddings(driver, provider)   ← only updates vectors, not graph
+      │     reindex_embeddings(driver, provider)  ← vectors only, graph unchanged
       │     asyncio.Lock prevents concurrent double-reseed
       │
-      ▼
-GraphRAGPipeline  app/graphrag_pipeline.py
-      │  (Learning Mode → MockEmbeddingProvider + MockLLM
-      │   OpenAI Mode  → OpenAIEmbeddingProvider + OpenAILLM)
+      ├─── mode: "demo" | "openai"
+      │     ▼
+      │   GraphRAGPipeline  app/graphrag_pipeline.py
+      │     (Learning Mode → MockEmbeddingProvider + MockLLM
+      │      OpenAI Mode   → OpenAIEmbeddingProvider + OpenAILLM)
+      │     ├── Phase 1 — Vector search
+      │     │     provider.embed(question) → db.index.vector.queryNodes()
+      │     │     → top-k DocumentChunk nodes + similarity scores
+      │     └── Phase 2 — Graph traversal
+      │           UNWIND chunk_ids → MATCH rules, risk_factors, policies, applicants
+      │           → llm.generate_answer() → {decision, reasoning, citations}
       │
-      ├── Phase 1 — Vector search
-      │     provider.embed(question) → db.index.vector.queryNodes()
-      │     → top-k DocumentChunk nodes + similarity scores
+      ├─── mode: "text2cypher"
+      │     ▼
+      │   Text2CypherService  app/text2cypher_service.py
+      │     GPT-4o generates read-only Cypher from question + schema
+      │     → Neo4j executes query → raw records
+      │     → GPT-4o synthesizes final answer from records
+      │     → {generated_cypher, raw_query_results, reasoning}
       │
-      └── Phase 2 — Graph traversal
-            UNWIND chunk_ids
-            MATCH (chunk)<-[:SUPPORTED_BY]-(rule)
-            OPTIONAL MATCH (rf)-[:EVALUATED_BY]->(rule)
-            OPTIONAL MATCH (p)-[:HAS_RULE]->(rule)
-            OPTIONAL MATCH (a)-[:HAS_CONDITION]->(rf)
-            → {rules, risk_factors, policies, applicants}
-                    │
-                    ▼
-            llm.generate_answer()   ← MockLLM or OpenAILLM
-            → {decision, reasoning, citations}
+      └─── mode: "auto"
+            ▼
+          RetrievalRouter  app/retrieval_router.py
+            GPT-4o classifies question → openai_graph | text2cypher | hybrid
+            → routes to GraphRAGPipeline, Text2CypherService, or both
+            → {selected_strategy, router_reason, …combined fields…}
 ```
+
+This implementation supports multiple retrieval strategies operating against a shared Neo4j knowledge graph:
+
+- **Learning Mode and OpenAI Mode** use the two-phase GraphRAG pipeline: vector similarity search followed by graph traversal.
+- **Text2Cypher Mode** uses GPT-4o to generate read-only Cypher queries and synthesize answers from Neo4j query results.
+- **Auto Mode** routes each question to the most appropriate retrieval strategy.
+- **Hybrid retrieval** executes GraphRAG and Text2Cypher in parallel and synthesizes a single answer.
+
+Retrieval strategy should match question type:
+
+- Semantic policy and underwriting questions benefit from GraphRAG.
+- Structured entity lookups benefit from Text2Cypher.
+- Recommendation-style questions that require both entity facts and policy interpretation often benefit from Hybrid retrieval.
 
 ---
 
 ## Graph Model
 
-```
+```text
 (Applicant) -[:APPLIES_FOR]→    (Policy)
 (Applicant) -[:HAS_CONDITION]→  (RiskFactor)
 (Applicant) -[:HAS_LAB_RESULT]→ (LabResult)
@@ -133,16 +170,16 @@ the rule, rule links to the risk factor and applicant. No single text chunk cont
 
 ---
 
-## Two Modes
+## Modes
 
-Mode is selected **per request** in the browser UI (or via the `mode` field in the API).
-The server pre-creates both pipelines at startup and switches between them automatically.
+Mode is selected **per request** via the `mode` field in the API (or the browser UI).
+The server initializes all available pipelines and services at startup based on configuration.
 
 ### Learning Mode (default — no API key needed)
 
 Mock embeddings (SHA-256 hash) + MockLLM (deterministic business logic). Free, offline, instant.
 
-Select **Learning** in the browser or pass `"mode": "demo"` in the request body.
+Pass `"mode": "demo"` in the request body.
 
 ### OpenAI Mode (requires `OPENAI_API_KEY`)
 
@@ -153,12 +190,109 @@ Real semantic embeddings (`text-embedding-3-small`) + `gpt-4o` reasoning over gr
 OPENAI_API_KEY=sk-...
 ```
 
-Select **OpenAI** in the browser or pass `"mode": "openai"` in the request body.
+Pass `"mode": "openai"` in the request body.
 
 > **Auto-reindex:** Switching modes re-embeds all `DocumentChunk` nodes automatically on
 > the first request in that mode — no manual `python3 -m app.seed` required.
 > Only the embedding vectors are updated; the graph structure is unchanged.
 > The first request after a mode switch takes a few extra seconds while re-indexing runs.
+
+### Text2Cypher Mode (requires `OPENAI_API_KEY`)
+
+Natural language → GPT-4o generates Cypher → executed against Neo4j → GPT-4o synthesizes answer.
+No vector embeddings or graph traversal. Suited for structured lookups: lists, counts, filters.
+
+Pass `"mode": "text2cypher"` in the request body.
+
+### Auto Mode (requires `OPENAI_API_KEY`)
+
+GPT-4o classifies the question and routes it to the best retrieval strategy:
+
+| Router decision | Strategy used                                                             |
+|-----------------|---------------------------------------------------------------------------|
+| `openai_graph`  | Vector search + graph traversal + GPT-4o (semantic / policy questions)    |
+| `text2cypher`   | NL -> Cypher -> graph records -> GPT-4o (structured entity lookups)       |
+| `hybrid`        | Both strategies run in parallel; GPT-4o synthesizes a single final answer |
+
+Hybrid is selected when a question names a specific entity *and* asks for a recommendation
+or explanation that also requires policy/manual interpretation.
+
+The response includes `selected_strategy` (what the router chose) and `router_reason`
+(a one-sentence explanation). For text2cypher and hybrid responses, `generated_cypher` and `raw_query_results` are included.
+
+For hybrid responses, these appear alongside the full GraphRAG graph context.
+
+Pass `"mode": "auto"` in the request body.
+
+> **Production note:** The router uses GPT-4o zero-shot classification. For production use,
+> validate routing accuracy against a golden dataset of labelled questions before relying
+> on it for high-stakes decisions.
+
+---
+
+## Screenshots
+
+### Knowledge Graph Model
+
+![Knowledge Graph Model](docs/images/08-graph-model.png)
+
+Neo4j graph model representing applicants, policies, risk factors, underwriting rules, and document chunks.
+
+---
+
+### Application Home Page
+
+![Application Home Page](docs/images/01-home-page.png)
+
+Unified interface supporting Learning Mode, OpenAI Mode, Text2Cypher Mode, and Auto Mode.
+
+---
+
+### GraphRAG Retrieval
+
+![GraphRAG Retrieval](docs/images/02-graphrag-retrieval.png)
+
+Vector similarity search retrieves relevant document chunks and expands context through graph traversal.
+
+---
+
+### GraphRAG Decision and Citations
+
+![GraphRAG Decision and Citations](docs/images/03-graphrag-decision.png)
+
+Decision generation, reasoning, and explainable citations derived from graph context.
+
+---
+
+### Text2Cypher Retrieval
+
+![Text2Cypher Retrieval](docs/images/04-text2cypher.png)
+
+Natural language is translated into Cypher, executed against Neo4j, and synthesized into a user-friendly answer.
+
+---
+
+### Auto Router — OpenAI GraphRAG
+
+![Auto Router — OpenAI GraphRAG](docs/images/05-auto-router-openai.png)
+
+Router selects openai_graph for semantic and policy interpretation questions.
+
+---
+
+### Auto Router — Text2Cypher
+
+![Auto Router — Text2Cypher](docs/images/06-auto-router-text2cypher.png)
+
+Router selects text2cypher for structured graph lookup questions.
+
+---
+
+### Auto Router — Hybrid Retrieval
+
+![Auto Router — Hybrid Retrieval](docs/images/07-auto-router-hybrid.png)
+
+Router selects hybrid retrieval when both structured graph facts and semantic reasoning are required.
 
 ---
 
@@ -171,74 +305,38 @@ python3 -m app.seed          # initial graph setup only — run once
 uvicorn app.main:app --port 8765 --reload
 ```
 
-Then open **http://127.0.0.1:8765** in your browser for the interactive GraphRAG application.
+Then open <http://127.0.0.1:8765> in your browser for the interactive GraphRAG application.
 
 `python3 -m app.seed` is only needed once to populate the graph. Switching between Learning Mode and
 OpenAI Mode in the UI re-indexes embeddings automatically — no manual re-seed required.
 
-API docs (Swagger): http://127.0.0.1:8765/docs
+API docs (Swagger): <http://127.0.0.1:8765/docs>
 
 > Ports 8000 and 8001 conflict with Docker on some machines — use 8765 or any free port.
 
 ---
 
-## Browser Application
+## User Interface Layer
 
 The root URL (`/`) serves a single-page application that visualises every pipeline step:
 
 | Section | What it shows |
-|---------|--------------|
-| Mode selector | Choose Learning Mode (mock, free) or OpenAI Mode (real embeddings + gpt-4o) |
-| Provider bar | Active embedding model and LLM class shown after every query |
+| ------- | ------------- |
+| Mode selector | Four mode cards: Learning Mode · OpenAI Mode · Text2Cypher Mode · Auto Mode |
+| Example question strips | Per-mode clickable pill buttons that fill the textarea — hidden for inactive modes |
+| Provider bar | Active mode, embedding model, and LLM; for Auto Mode shows Router and Selected strategy |
+| Router reason callout (blue, Auto Mode only) | Strategy badge + one-sentence explanation of the routing decision |
 | Auto-reindex notice (green) | Appears once when embeddings were automatically re-indexed for the selected mode |
 | Embedding mismatch warning (amber) | Appears only if auto-reindex failed (e.g. network error during OpenAI call) |
-| Phase 1 — Vector Search | Matched DocumentChunk nodes with source and similarity score |
-| Phase 2 — Graph Traversal | Applicant, policies, risk factors, underwriting rules pulled from the graph |
-| Final Decision | Colour-coded badge (APPROVE / REFER\_FOR\_REVIEW / REQUIRE\_ADDITIONAL\_REVIEW / DECLINE) |
-| Reasoning | Numbered explanation from the LLM |
-| Citations | Each DocumentChunk source and UnderwritingRule that supported the decision |
+| Generated Cypher (Text2Cypher / hybrid) | Cypher query generated from the question and executed against Neo4j |
+| Raw Query Results (Text2Cypher / hybrid) | Records returned directly from Neo4j as a table |
+| Phase 1 — Vector Search (GraphRAG / hybrid) | Matched DocumentChunk nodes with source and similarity score |
+| Phase 2 — Graph Traversal (GraphRAG / hybrid) | Applicant, policies, risk factors, underwriting rules pulled from the graph |
+| Final Decision (GraphRAG / hybrid) | Colour-coded badge (APPROVE / REFER\_FOR\_REVIEW / REQUIRE\_ADDITIONAL\_REVIEW / DECLINE) |
+| Reasoning / Answer | Numbered explanation from the LLM; labelled "Answer" in Text2Cypher mode |
+| Citations (GraphRAG / hybrid) | Each DocumentChunk source and UnderwritingRule that supported the decision |
 
 No React. No build step. Plain HTML + CSS + JavaScript served by FastAPI.
-
----
-
-## Screenshots
-
-### 1. Knowledge Graph Model
-
-![Knowledge Graph Model](docs/images/01-graph-model.png)
-
-Insurance underwriting knowledge graph showing the full entity schema — Applicant, Policy, RiskFactor, LabResult, UnderwritingRule, and DocumentChunk nodes connected by typed relationships (HAS_CONDITION, EVALUATED_BY, HAS_RULE, SUPPORTED_BY).
-
-### 2. Interactive GraphRAG Application
-
-![Interactive GraphRAG Application](docs/images/02-home.png)
-
-Browser-based GraphRAG application showing the pipeline step indicator (Question → Vector Search → Graph Traversal → LLM Reasoning → Decision), underwriting question input, and mode selector with **Learning Mode** (mock embeddings · MockLLM) and **OpenAI Mode** (text-embedding-3-small · gpt-4o).
-
-### 3. Retrieval Flow
-
-![Retrieval Flow](docs/images/03-flow.png)
-
-End-to-end pipeline diagram from question and execution mode (`"learning"` or `"openai"`) through auto-reindex check, embedding generation, Neo4j HNSW vector search, graph traversal, and LLM answer generation.
-
-### 4. Phase 1 – Vector Search
-
-![Phase 1 – Vector Search](docs/images/04-vector-search.png)
-
-Top-k DocumentChunk nodes retrieved from Neo4j's HNSW vector index by cosine similarity — Underwriting Manual v3.2 sections 6.3, 4.1, and 6.5 with scores of 0.823, 0.781, and 0.774 respectively.
-
-### 5. Phase 2 – Graph Traversal
-
-![Phase 2 – Graph Traversal](docs/images/05-graph-traversal.png)
-
-Structured context assembled from matched chunks via graph traversal: applicant John Smith (age 48), Preferred Term Life policy, two risk factors (Controlled A1C, Type 2 Diabetes), and three underwriting rules with their decision classifications.
-
-### 6. Explainable Decision & Citations
-
-![Explainable Decision & Citations](docs/images/06-decision.png)
-
-REQUIRE ADDITIONAL REVIEW decision with step-by-step reasoning grounded in the retrieved graph context, and traceable citations linking each conclusion to specific DocumentChunk sources and UnderwritingRule nodes.
 
 ---
 
@@ -250,10 +348,20 @@ curl -X POST http://127.0.0.1:8765/ask \
   -H "Content-Type: application/json" \
   -d '{"question":"Should a diabetic applicant with A1C below 7.0 qualify for preferred term life?","mode":"demo"}'
 
-# OpenAI mode (requires OPENAI_API_KEY in .env)
+# OpenAI Mode (requires OPENAI_API_KEY in .env)
 curl -X POST http://127.0.0.1:8765/ask \
   -H "Content-Type: application/json" \
-  -d '{"question":"...","mode":"openai"}'
+  -d '{"question":"Should a diabetic applicant with A1C below 7.0 qualify for preferred term life?","mode":"openai"}'
+
+# Text2Cypher Mode — structured graph lookup (requires OPENAI_API_KEY)
+curl -X POST http://127.0.0.1:8765/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Which underwriting rules apply to John Smith?","mode":"text2cypher"}'
+
+# Auto Mode — router selects strategy (requires OPENAI_API_KEY)
+curl -X POST http://127.0.0.1:8765/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Based on John Smith'\''s profile and underwriting rules, what is your recommendation?","mode":"auto"}'
 ```
 
 **Response:**
@@ -309,9 +417,9 @@ python3 -m app.graphrag_pipeline
 
 ## Endpoints
 
-| Method | Path     | Description                          |
-|--------|----------|--------------------------------------|
-| GET    | /health  | Liveness check                       |
+| Method | Path     | Description                              |
+| ------ | -------- | ---------------------------------------- |
+| GET    | /health  | Liveness check                           |
 | POST   | /ask     | Submit a question, get a GraphRAG answer |
 
 Interactive docs (Swagger UI): `http://127.0.0.1:8765/docs`
@@ -326,28 +434,30 @@ Interactive docs (Swagger UI): `http://127.0.0.1:8765/docs`
 
 ---
 
-## Components — Learning Mode vs OpenAI Mode
+## Components by Mode
 
-| Component     | Learning Mode (default)                     | OpenAI Mode                              |
-|---------------|---------------------------------------------|------------------------------------------|
-| Embeddings    | SHA-256 hash → float[1536] (not semantic)   | `text-embedding-3-small` (semantic)      |
-| LLM           | Deterministic Python business logic         | `gpt-4o` reasoning over graph context   |
-| Data          | 1 applicant, 4 rules, 4 document chunks     | Same — data is provider-agnostic         |
-| Cost          | Zero                                        | OpenAI API charges apply                 |
+| Component | Learning Mode | OpenAI Mode | Text2Cypher Mode | Auto Mode |
+| --- | --- | --- | --- | --- |
+| Embeddings | SHA-256 hash (not semantic) | `text-embedding-3-small` | None | `text-embedding-3-small` (if routed to graph) |
+| LLM | Deterministic Python logic | `gpt-4o` | `gpt-4o` | `gpt-4o` (router + answer) |
+| Retrieval | Vector search + graph | Vector search + graph | NL → Cypher → graph records | Router-selected: graph / cypher / hybrid |
+| Graph traversal | Yes | Yes | No (direct Cypher execution) | Depends on selected strategy |
+| API key needed | No | Yes | Yes | Yes |
+| Cost | Zero | OpenAI API charges apply | OpenAI API charges apply | OpenAI API charges apply |
 
 Switch modes using the selector in the browser UI or the `mode` field in the API request.
 Embeddings are re-indexed automatically on the first request in a new mode.
-The graph model, traversal queries, and API contract are identical in both modes.
+The graph model, traversal queries, and API contract are identical across all modes.
 
 ---
 
-## Production Evolution
+## Production Deployment Considerations
 
 1. **OpenAI mode is already implemented** — set `OPENAI_API_KEY` in `.env` and select
    OpenAI Mode in the browser. Embeddings re-index automatically on the first request.
    The graph model and API contract are unchanged.
 2. **Scale** — the schema supports any number of applicants, policies, and rules. Retrieval
-   performance scales with Neo4j's HNSW index, not data volume.
+   performance scales logarithmically with data volume through Neo4j's HNSW index (O(log n) rather than O(n) linear scan).
 3. **Auth + observability** — add `Depends()` middleware for API key or JWT auth. Log
    `retrieval_summary` counts to detect retrieval quality drift over time.
 4. **Additional LLM providers** — add any new LLM class following the same interface as
@@ -355,26 +465,9 @@ The graph model, traversal queries, and API contract are identical in both modes
 
 ---
 
-## Why I Built This
-
-I built this project as a hands-on exercise to understand GraphRAG from the inside — not by using a library that abstracts the pipeline, but by building each layer separately so I could explain what it does and why.
-
-**Learning goals:**
-
-- **Neo4j graph modeling** — how to represent a relationship-heavy domain as a property graph rather than a flat schema
-- **GraphRAG architecture** — how vector retrieval and graph traversal complement each other, and why the combination outperforms either alone
-- **Vector retrieval** — how HNSW indexes work, how embeddings are stored and queried, and what similarity scores mean in practice
-- **Graph traversal** — writing multi-hop Cypher queries and understanding why one round-trip is better than multiple lookups
-- **Explainable AI workflows** — building a citation chain where every part of the answer traces to a specific source in the graph
-- **Graph databases as RAG infrastructure** — understanding why a graph store provides structural advantages over a vector-only store for relationship-heavy domains
-
-Insurance underwriting was a deliberate choice: the domain is relationship-heavy (applicant → condition → rule → policy), the decision logic is concrete enough to validate that retrieval is actually working, and explainability requirements mirror what regulated industries genuinely need.
-
----
-
 ## Topics Explored
 
-Building this project provided hands-on experience with:
+Technical patterns implemented in this reference:
 
 - **Knowledge Graph Modeling** — designing a property graph schema for a relationship-heavy domain; choosing which facts belong on nodes vs. relationships
 - **Cypher Graph Traversal** — multi-hop `MATCH` and `OPTIONAL MATCH` queries; batching via `UNWIND` to minimise round-trips
@@ -388,54 +481,48 @@ Building this project provided hands-on experience with:
 - **FastAPI Service Design** — lifespan-managed resources, typed Pydantic models, async request handling with `asyncio.to_thread()`
 - **Provider Abstraction Pattern** — strategy pattern so the pipeline is provider-agnostic; `for_mode()` classmethod handles all wiring
 - **Embedding Consistency Validation** — detecting stored vs. active embedding model mismatches and auto-reindexing before the query runs
-
----
-
-## GitHub Repository Metadata
-
-Recommended values for GitHub repository settings (copy directly):
-
-**Description:**
-```
-Insurance underwriting GraphRAG reference implementation using Neo4j, vector search, graph traversal, OpenAI embeddings, and explainable AI citations.
-```
-
-**Topics:**
-
-- neo4j
-- graphrag
-- graph-database
-- knowledge-graph
-- rag
-- vector-search
-- hnsw
-- openai
-- fastapi
-- python
-- genai
+- **Text2Cypher Pattern** — NL-to-Cypher generation with schema grounding; read-only execution guardrails; structured graph lookups without vector search
+- **Router-Based Retrieval Orchestration** — GPT-4o zero-shot routing; strategy selection at query time; transparent `selected_strategy` and `router_reason` in every response
+- **Hybrid Retrieval** — running both retrievers in parallel and synthesizing a single answer from combined graph and Cypher context
 
 ---
 
 ## Project Structure
 
-```
+```text
 static/
-  index.html            — single-page application UI
-  styles.css            — no external CDN dependencies
-  app.js                — fetch /ask, render each pipeline section
+  index.html              — single-page application UI
+  styles.css              — no external CDN dependencies
+  app.js                  — fetch /ask, render each pipeline section
+  favicon.svg             — browser favicon and header icon
 app/
-  config.py             — Neo4j connection settings (dotenv)
-  graph.py              — driver factory + run_query helper
-  embed.py              — mock embedding: SHA-256 hash → float[1536]
-  seed.py               — constraints, seed nodes/relationships, attach embeddings; reindex_embeddings() for auto mode switching
-  vector_index.py       — create/verify HNSW vector index, similarity_search()
-  graph_retriever.py    — GraphRetriever: two-phase vector + graph retrieval
-  mock_llm.py           — MockLLM: deterministic underwriting decision logic
-  graphrag_pipeline.py  — GraphRAGPipeline: retriever → LLM → structured answer
-  main.py               — FastAPI app: POST /ask, GET /health, error handling
+  config.py               — Neo4j connection settings (dotenv)
+  graph.py                — driver factory + run_query helper
+  embed.py                — MockEmbeddingProvider (SHA-256) and OpenAIEmbeddingProvider (text-embedding-3-small)
+  seed.py                 — constraints, seed nodes/relationships, attach embeddings; reindex_embeddings() for auto mode switching
+  vector_index.py         — create/verify HNSW vector index, similarity_search()
+  graph_retriever.py      — GraphRetriever: two-phase vector + graph retrieval
+  mock_llm.py             — MockLLM: deterministic underwriting decision logic
+  openai_llm.py           — OpenAILLM: GPT-4o reasoning with structured JSON responses
+  graphrag_pipeline.py    — GraphRAGPipeline: retriever → LLM → structured answer
+  text2cypher_service.py  — Text2CypherService: NL → GPT-4o → Cypher → Neo4j → GPT-4o answer
+  retrieval_router.py     — RetrievalRouter: GPT-4o classifies question, routes to openai_graph / text2cypher / hybrid
+  main.py                 — FastAPI app: POST /ask, GET /health, error handling
 data/
   underwriting_sample.json  — seed data source of truth (all nodes + relationships)
-ARCHITECTURE.md             — detailed design notes
-LEARNING_NOTES.md           — step-by-step theory + design Q&A
-CYPHER_QUERIES.md           — Cypher reference queries for each retrieval phase
+docs/
+  images/
+    01-home-page.png
+    02-graphrag-retrieval.png
+    03-graphrag-decision.png
+    04-text2cypher.png
+    05-auto-router-openai.png
+    06-auto-router-text2cypher.png
+    07-auto-router-hybrid.png
+    08-graph-model.png
+docker-compose.yml          — Neo4j 5 service with APOC plugin
+requirements.txt            — Python dependencies
+README.md                   — project overview, architecture summary, setup instructions, screenshots, and usage guide
+ARCHITECTURE.md             — detailed design and implementation architecture
+CYPHER_QUERIES.md           — Cypher reference queries for GraphRAG and Text2Cypher validation
 ```

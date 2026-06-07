@@ -110,8 +110,8 @@ ORDER BY r.id
 ```
 
 **Why DocumentChunk nodes exist:**
-In the full GraphRAG pipeline, these chunks will carry vector embeddings.
-The VectorRetriever will find the most relevant chunk by semantic similarity,
+In the GraphRAG pipeline, these chunks carry vector embeddings.
+GraphRetriever finds the most relevant chunk by semantic similarity,
 then the graph traversal walks back to the rule and applicant context.
 The chunk is the *semantic entry point*; the graph is the *structured context*.
 
@@ -139,9 +139,9 @@ RETURN
 ORDER BY r.id
 ```
 
-**This is the retrieval_query** you will write in Step 7 when configuring GraphRAG.
-Notice it returns structured context (not just raw text chunks) — that's what makes
-graph retrieval richer than pure vector search.
+This mirrors the structured context assembled by the GraphRAG traversal.
+It returns structured entities and relationships — not just raw text chunks — which is
+what makes graph retrieval richer than pure vector search.
 
 ---
 
@@ -158,9 +158,9 @@ rule chunks — but the LLM has no way to know:
 - That rule_004 applies to him because he is over 45 AND has diabetes
 
 **What the graph adds:**
-The graph encodes *who this rule applies to and why*. When the VectorRetriever
+The graph encodes *who this rule applies to and why*. When GraphRetriever
 finds `chunk_002` (the A1C rule text) as semantically similar to the question,
-the retrieval_query can immediately walk:
+the graph traversal immediately walks:
 
 ```
 chunk_002 ← SUPPORTED_BY ← rule_002 ← EVALUATED_BY ← rf_001 (Type 2 Diabetes)
@@ -180,7 +180,7 @@ a single vector hit + graph traversal.
 
 ---
 
-## Step 3 Queries — Vector Index and Embeddings
+## Vector Index and Embedding Validation
 
 ### Query 7 — Verify Vector Index Exists
 
@@ -256,13 +256,13 @@ ORDER BY score DESC
 - `chunk_002` returns first with score = `1.0` (exact match with itself)
 - The other 3 chunks return with scores < 1.0
 
-**NOTE:** With mock embeddings, the relative scores of the other 3 chunks have no
-semantic meaning — they reflect hash proximity. When you swap in a real embedder
-in Step 6, the top results will reflect actual text similarity.
+**NOTE:** With mock embeddings (Learning Mode), the relative scores of the other 3 chunks have no
+semantic meaning — they reflect hash proximity. When using OpenAI Mode with
+text-embedding-3-small, top results reflect semantic similarity.
 
 ---
 
-### Run the Full Step 3 Check from Python
+### Run the Full Embedding Validation from Python
 
 The Python script does all of the above plus runs 3 semantic queries:
 
@@ -272,10 +272,10 @@ python -m app.vector_index
 
 ---
 
-## Step 4 Queries — Graph-Enhanced Retrieval
+## GraphRAG Traversal Validation
 
 These queries show each hop of the two-phase retrieval separately, then combined.
-Run them in Neo4j Browser to understand what `GraphRetriever` does under the hood.
+Run them in Neo4j Browser to validate what `GraphRetriever` does under the hood.
 
 ---
 
@@ -357,7 +357,7 @@ by that rule under this policy."
 
 ---
 
-### Query D — Risk Factor to Full Chain (GraphRetriever's retrieval_query)
+### Query D — Full Context Assembly (GraphRetriever._traverse_from_chunks)
 
 This is the exact traversal `GraphRetriever._traverse_from_chunks()` runs internally.
 Replace `$chunk_ids` with actual IDs to test manually.
@@ -378,4 +378,55 @@ RETURN
     [x IN (collect(DISTINCT a_cond) + collect(DISTINCT a_pol)) WHERE x IS NOT NULL | x.name] AS applicants
 ```
 
-This is the query to study when preparing to explain GraphRAG retrieval and graph-based context assembly.
+This is the internal traversal that assembles structured context from matched chunks for GraphRAG retrieval and context assembly.
+
+---
+
+## Text2Cypher Validation Examples
+
+These queries represent the type of Cypher that `Text2CypherService` generates from natural language
+questions in Text2Cypher Mode and Auto Mode. Run them in Neo4j Browser to confirm that the graph
+model supports structured entity lookups directly, without vector search.
+
+---
+
+### Which underwriting rules apply to John Smith?
+
+```cypher
+MATCH (a:Applicant {name: "John Smith"})-[:HAS_CONDITION]->(rf:RiskFactor)-[:EVALUATED_BY]->(r:UnderwritingRule)
+RETURN DISTINCT a.name AS applicant, rf.name AS risk_factor, r.title AS rule, r.decision AS decision
+ORDER BY rf.name
+LIMIT 25
+```
+
+**Expected:** Rows linking John Smith's RiskFactor nodes to their governing UnderwritingRule nodes,
+with the structured decision outcome for each.
+
+---
+
+### What risk factors does John Smith have?
+
+```cypher
+MATCH (a:Applicant {name: "John Smith"})-[:HAS_CONDITION]->(rf:RiskFactor)
+RETURN rf.name AS risk_factor, rf.category AS category, rf.controlled AS controlled
+ORDER BY rf.name
+LIMIT 25
+```
+
+**Expected:** 3 rows — the risk factors stored on John Smith's node via `HAS_CONDITION` relationships,
+with category and controlled status. These are the structured facts Text2Cypher retrieves directly
+without requiring semantic similarity.
+
+---
+
+### What policy is John Smith applying for?
+
+```cypher
+MATCH (a:Applicant {name: "John Smith"})-[:APPLIES_FOR]->(p:Policy)
+RETURN p.name AS policy, p.type AS type, p.class_name AS class
+LIMIT 25
+```
+
+**Expected:** 1 row — the Policy node linked to John Smith via `APPLIES_FOR`, showing product name,
+type, and underwriting class. This is a structured lookup that Text2Cypher handles precisely where
+vector search would return semantically similar — but not necessarily correct — results.

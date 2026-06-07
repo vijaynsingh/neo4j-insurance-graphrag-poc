@@ -1,59 +1,107 @@
 # Architecture — Neo4j Insurance GraphRAG
 
-Design notes for the retrieval pipeline, graph model, API layer, and browser application.
+A reference implementation demonstrating multiple retrieval strategies over a Neo4j knowledge
+graph for insurance underwriting.
 
 ---
 
-## UI Layer (Step 9)
+## Overview
 
-The browser application (`static/index.html`, `styles.css`, `app.js`) is an intentionally thin
-visualisation layer. It has one job: call `POST /ask` and render the response sections
-in a way that makes the pipeline steps visible to a human.
+This system integrates four retrieval strategies against a single Neo4j knowledge graph:
 
-```
-Browser
-  │  GET /             → FastAPI serves static/index.html
-  │  GET /static/*     → FastAPI StaticFiles mount
-  │  POST /ask  ──────→ GraphRAGPipeline (unchanged)
-  │       ← JSON response with matched_chunks + graph_context added in Step 9
-  ↓
-Renders 6 sections:
-  [Question] → [Phase 1: Vector chunks] → [Phase 2: Graph context]
-  → [Decision badge] → [Reasoning] → [Citations]
-```
+- **GraphRAG** — two-phase retrieval: semantic vector search over document chunks, then structured
+  graph traversal to assemble applicant, rule, and policy context into a structured dict that is
+  passed directly to an LLM.
+- **Text2Cypher** — natural language to Cypher generation; GPT-4o reads the question and the graph
+  schema and writes the query directly. Best for entity lookups and structural queries where vector
+  similarity adds no value.
+- **Auto Routing** — a GPT-4o classifier selects the retrieval strategy at query time based on
+  question type. The routing decision is transparent: `selected_strategy` and `router_reason` appear
+  in every response.
+- **Hybrid Retrieval** — GraphRAG and Text2Cypher run in parallel; GPT-4o synthesizes a single
+  answer from both contexts, delivering semantic understanding and structural precision simultaneously.
 
-**Design constraints (deliberately kept):**
-- No React, no build tools, no npm — zero setup friction for this application
-- No CDN dependencies — works fully offline once the server is running
-- No WebSockets — a simple fetch per question is sufficient for this application
-- `StaticFiles` mount at `/static`, `FileResponse` at `/` — two lines in FastAPI
-- `aiofiles` is the only new dependency; it is required by FastAPI's `StaticFiles`
-
-**What the UI does NOT do:**
-The UI is read-only. It does not write to the graph, does not manage sessions, and has
-no authentication. It is a learning tool, not a production UI. The API (`/ask`, `/health`)
-is the production surface; the UI is optional scaffolding on top.
-
-**`/ask` response enrichment:**
-Fields added additively across Steps 9–10 (original fields are unchanged):
-- `matched_chunks: list[dict]` — full chunk data (id, source, text, score) for Phase 1 display
-- `graph_context: dict` — rules, risk\_factors, policies, applicants for Phase 2 display
-- `mode: str` — which pipeline ran (Learning Mode: `"demo"`, OpenAI Mode: `"openai"`)
-- `embedding_provider: str` — active embedding model name (`"mock"` or `"text-embedding-3-small"`)
-- `llm_provider: str` — active LLM class name (`"MockLLM"` or `"OpenAILLM"`)
-- `compatibility_warning: str | None` — set only if auto-reindex failed; null in normal operation
-- `reindexed: bool` — `true` on the first request after a mode switch (embeddings were re-indexed)
-
-All new fields have defaults, so clients that only read the original fields continue to work without changes.
+All four strategies operate against the same graph model and return the same API response shape.
 
 ---
 
-## Graph Model
+## Business Problem
+
+Insurance underwriting decisions require:
+
+- **Policy interpretation** — which rules govern the applicant's conditions for the product they are
+  applying for
+- **Risk evaluation** — structured facts about the applicant: age, conditions, lab results, controlled
+  status
+- **Explainable decisions** — every conclusion must be traceable to a specific source in the
+  underwriting manual or the rule graph
+- **Regulatory traceability** — a compliance reviewer must be able to reproduce exactly what evidence
+  the system considered
+
+Traditional vector-only RAG is insufficient for these requirements. A similarity search returns the
+most relevant text chunks, but it cannot:
+
+- Identify *which specific applicant* has *which specific condition*
+- Determine *which rules* apply to *that condition* for *that policy*
+- Produce citations that trace to a specific graph path rather than an approximate embedding
+  neighbourhood
+
+A graph traversal assembles that reasoning chain explicitly. Combined with semantic retrieval and
+LLM-generated Cypher, the system can answer the full range of underwriting questions — from
+conceptual ("how does controlled diabetes affect underwriting?") to structural ("which rules apply to
+John Smith?").
+
+---
+
+## Solution Architecture
+
+```text
+User Question
+      │
+      ▼
+Retrieval Strategy
+(GraphRAG / Text2Cypher / Auto / Hybrid)
+      │
+      ▼
+Neo4j Knowledge Graph
+(Vector Index + Graph Traversal / Direct Cypher Execution)
+      │
+      ▼
+GPT-4o Reasoning
+(Structured context → decision, reasoning, citations)
+      │
+      ▼
+API Response
+(decision, reasoning, citations, generated_cypher, raw_query_results,
+ selected_strategy, router_reason)
+```
+
+**Major components:**
+
+- **FastAPI application** (`app/main.py`) — routes requests by mode, manages the driver lifecycle,
+  handles automatic re-indexing on embedding provider switch
+- **GraphRAG pipeline** (`app/graphrag_pipeline.py`, `app/graph_retriever.py`) — two-phase retrieval:
+  HNSW vector search then structured graph traversal
+- **Text2Cypher service** (`app/text2cypher_service.py`) — schema-grounded LLM Cypher generation
+  and execution against the shared Neo4j driver
+- **Retrieval router** (`app/retrieval_router.py`) — GPT-4o zero-shot classifier; routes to
+  `openai_graph`, `text2cypher`, or `hybrid`
+- **Embedding providers** (`app/embed.py`) — `MockEmbeddingProvider` and `OpenAIEmbeddingProvider`;
+  automatic re-indexing on provider switch
+- **LLM providers** (`app/mock_llm.py`, `app/openai_llm.py`) — identical interface; `MockLLM` for
+  local validation without API cost, `OpenAILLM` for production
+- **User interface layer** (`static/`) — single-page application that calls `POST /ask` and renders
+  all pipeline stages: Phase 1 chunks, Phase 2 graph context, decision badge, citations, generated
+  Cypher, raw query results, and router decisions
+
+---
+
+## Knowledge Graph Model
 
 ### Node labels
 
 | Label | Purpose | Key properties |
-|-------|---------|----------------|
+| --- | --- | --- |
 | `Applicant` | Person applying for coverage | `name`, `age` |
 | `Policy` | Insurance product | `name`, `type`, `class_name` |
 | `RiskFactor` | Medical or lifestyle condition | `name`, `category`, `controlled` |
@@ -63,7 +111,7 @@ All new fields have defaults, so clients that only read the original fields cont
 
 ### Relationship types
 
-```
+```text
 (Applicant)         -[:APPLIES_FOR]→    (Policy)
 (Applicant)         -[:HAS_CONDITION]→  (RiskFactor)
 (Applicant)         -[:HAS_LAB_RESULT]→ (LabResult)
@@ -72,12 +120,13 @@ All new fields have defaults, so clients that only read the original fields cont
 (UnderwritingRule)  -[:SUPPORTED_BY]→   (DocumentChunk)
 ```
 
-### Why a graph instead of a relational table
+### Why a graph instead of a relational model
 
 An underwriting decision requires traversing a chain:
+
 > Applicant → what conditions do they have → which rules govern those conditions → what policy are they applying for → what does the rule say to do
 
-In SQL, this is 4+ JOINs and a non-trivial query. In Cypher:
+In SQL, this is 4+ JOINs across normalised tables. In Cypher:
 
 ```cypher
 MATCH (a:Applicant)-[:HAS_CONDITION]->(rf)-[:EVALUATED_BY]->(r:UnderwritingRule)
@@ -85,47 +134,73 @@ MATCH (p:Policy)-[:HAS_RULE]->(r)
 RETURN a.name, rf.name, r.decision, p.name
 ```
 
-Adding a new relationship type (e.g., connecting a lab result directly to a rule) is a new
-relationship — no schema migration, no ALTER TABLE.
+Adding a new relationship type (e.g., connecting a lab result directly to a rule) requires a new
+relationship — no schema migration, no `ALTER TABLE`.
 
 ### Why embeddings live on DocumentChunk, not UnderwritingRule
 
 UnderwritingRule text is short and precise:
+
 > "Controlled Type 2 Diabetes with A1C below 7.0 may be referred for underwriting review."
 
-Embedding models work best on paragraph-length text that provides surrounding semantic
-context. The DocumentChunk holds the manual passage this rule was extracted from — richer
-vocabulary, better embedding quality.
+Embedding models perform best on paragraph-length text with surrounding semantic context. The
+`DocumentChunk` holds the manual passage from which the rule was extracted — richer vocabulary and
+better embedding quality.
 
-**Design principle:** embed what is verbose and semantically rich; traverse to what is precise
-and structured.
+**Design principle:** embed what is verbose and semantically rich; traverse to what is precise and
+structured.
 
 ---
 
-## Retrieval Flow
+## Retrieval Strategies
 
-```
-Question  +  execution mode ("learning" | "openai")
-  │
-  ▼  auto-reindex check (if stored embedding_model ≠ provider.model_name)
-     reindex_embeddings(driver, provider)   — re-embeds chunks, updates metadata
-     asyncio.Lock prevents concurrent double-reseed
-  │
-  ▼  provider.embed(question)     — mock hash or text-embedding-3-small
-float[1536]
-  │
-  ▼  db.index.vector.queryNodes('document_chunk_embeddings', top_k, vector)
-Top-k DocumentChunk nodes         — most similar by cosine distance
-  │
-  ▼  UNWIND chunk_ids + MATCH traversal
-{
-  rules:        UnderwritingRule nodes reachable via SUPPORTED_BY
-  risk_factors: RiskFactor nodes linked via EVALUATED_BY
-  policies:     Policy nodes linked via HAS_RULE
-  applicants:   Applicant nodes linked via HAS_CONDITION or APPLIES_FOR
-}
-  │
-  ▼  llm.generate_answer(question, context)   — MockLLM or OpenAILLM
+| Capability | GraphRAG | Text2Cypher | Hybrid |
+| --- | --- | --- | --- |
+| Semantic retrieval | ✓ | Limited | ✓ |
+| Entity lookup | Moderate | Excellent | Excellent |
+| Explainability | High | High | Very High |
+| Aggregations | Limited | Excellent | Excellent |
+| Cost | Medium | Medium | Highest |
+| Complexity | Medium | Medium | High |
+
+**GraphRAG** is the right choice when the question requires semantic understanding — reasoning about
+what a rule means in context, or retrieving documentation by concept proximity. The vector index finds
+relevant document chunks; graph traversal assembles the structured context around them.
+
+**Text2Cypher** is the right choice when the question targets a specific entity — names, IDs,
+enumerations, counts. There is no useful semantic proximity for "which rules apply to John Smith" —
+the correct answer requires exact graph traversal, not approximate embedding matching.
+
+**Hybrid** is the right choice when the question simultaneously requires both: semantic context *and*
+structured entity data. Running both retrievers and merging the results gives GPT-4o more complete
+context than either retriever alone.
+
+**Auto routing** removes the burden of mode selection from the caller. GPT-4o classifies the question
+and selects the strategy at request time. The decision is transparent: `selected_strategy` and
+`router_reason` are returned with every response.
+
+---
+
+## GraphRAG Architecture
+
+GraphRAG retrieval is two-phase: HNSW vector similarity search locates the most relevant document
+chunks, then graph traversal expands outward from those chunks to assemble the structured context —
+rules, risk factors, applicants, policies.
+
+```text
+User question
+    │
+    ▼  provider.embed(question)  →  float[1536]
+HNSW Vector Index
+(db.index.vector.queryNodes)
+    │
+    ▼  Top-k DocumentChunk nodes
+Graph Traversal (UNWIND + OPTIONAL MATCH)
+    │
+    ▼  {rules, risk_factors, policies, applicants}
+GPT-4o  llm.generate_answer(question, context)
+    │
+    ▼
 {decision, reasoning, supporting_rules, risk_factors, citations}
 ```
 
@@ -137,12 +212,14 @@ YIELD node, score
 RETURN node.id AS id, node.source AS source, node.text AS text, score
 ```
 
-Returns the DocumentChunk nodes whose embeddings are closest to the query embedding.
-In Learning Mode, similarity scores cluster near 0.5 because mock embeddings are not semantic —
-all hashes end up in roughly the same region of the 1536-dimensional space.
+Returns the `DocumentChunk` nodes whose embeddings are closest to the query embedding. The Neo4j
+vector index uses HNSW (Hierarchical Navigable Small World), which organises vectors into a
+multi-layer approximate nearest-neighbour graph — O(log n) search complexity rather than O(n) linear
+scan. The same algorithm underlies Pinecone, Weaviate, and pgvector.
 
-In production, relevant chunks score near 1.0 and irrelevant ones score near 0.0.
-The retrieval logic is identical; only the embedding quality changes.
+In Learning Mode, similarity scores cluster near 0.5 because SHA-256 mock embeddings are not
+semantic. In production with `text-embedding-3-small`, relevant chunks score near 1.0 and irrelevant
+ones near 0.0. The retrieval logic is identical; only the embedding quality changes.
 
 ### Phase 2 — Graph traversal
 
@@ -162,9 +239,161 @@ RETURN
 ```
 
 Key design points:
+
 - `UNWIND` batches all chunk IDs into one round-trip, not one query per chunk
-- `OPTIONAL MATCH` means nodes with no connections still return (no silent filtering)
+- `OPTIONAL MATCH` means nodes with no connections still return — no silent filtering
 - Deduplication happens in Python after the query, not in Cypher — easier to test and debug
+
+The assembled context dict — not raw text — is passed to GPT-4o. The LLM receives structured
+entities and relationships, which is the basis for traceable citations.
+
+---
+
+## Text2Cypher Architecture
+
+Text2Cypher replaces the two-phase GraphRAG pipeline with a single LLM-driven Cypher generation
+step. No vector index is queried; GPT-4o reads the question and the graph schema and writes the
+Cypher directly.
+
+```text
+User question
+    │
+    ▼  System prompt: question + schema description
+GPT-4o
+    │
+    ▼  Generated Cypher (string)
+Neo4j driver.run(cypher)
+    │
+    ▼  Raw records (list of dicts)
+    │
+    ▼  GPT-4o: summarise records into plain-language answer
+{reasoning, answer}
+```
+
+### Schema grounding
+
+The system prompt passed to GPT-4o includes:
+
+- All node labels and their key properties
+- All relationship types and their directionality
+- The exact property names to reference in `WHERE`, `RETURN`, and `MATCH` clauses
+- 2–3 example question/Cypher pairs (few-shot) to anchor the output format
+
+Without schema grounding, the LLM generates labels and property names that do not exist in the
+graph. With it, GPT-4o consistently produces valid, runnable Cypher for the question types the
+schema supports.
+
+### Query execution
+
+The generated Cypher string is extracted from the LLM response and executed against Neo4j via the
+shared driver. Raw records are returned directly and surfaced to the caller in `raw_query_results`.
+The `generated_cypher` field in the API response contains the exact query that was executed — fully
+auditable.
+
+### Production guardrails
+
+| Concern | Mitigation |
+| --- | --- |
+| Hallucinated labels or properties | Schema grounding + few-shot examples reduce generation errors |
+| Write operations in generated query | Application-level validation rejects write keywords (`CREATE`, `MERGE`, `SET`, `DELETE`, `DETACH`, `REMOVE`, `DROP`, `FOREACH`) before query execution |
+| Unbounded result sets | Append `LIMIT 25` when the generated query does not include a LIMIT clause; additionally cap returned records to 50 rows in application code before synthesis |
+| Syntax errors | Wrap execution in try/except; return a graceful error rather than a 500 |
+| Silent wrong answers | Log generated Cypher alongside results; expose both in the API response for auditability |
+| Schema drift | Any change to node labels or property names requires updating the schema prompt |
+
+### Cypher observability
+
+`generated_cypher` is returned in the API response so every query is inspectable. In production, log
+it alongside the question, the record count, and the latency. This makes it possible to audit the
+system's behaviour and detect prompt-quality degradation over time.
+
+---
+
+## Auto Router Architecture
+
+Auto Mode adds a classification step before retrieval. The router reads the question and selects the
+strategy best suited to answer it — the caller does not need to know which mode to use.
+
+```text
+POST /ask  (mode=auto)
+    │
+    ▼  RetrievalRouter.classify(question)
+       System prompt: question + strategy descriptions
+       GPT-4o (zero-shot classification)
+       Returns: {selected_strategy, router_reason}
+    │
+    ├── "openai_graph" ──► GraphRAGPipeline.run()
+    │                        (vector search + graph traversal)
+    │
+    ├── "text2cypher" ───► Text2CypherService.run()
+    │                        (LLM → Cypher → Neo4j records)
+    │
+    └── "hybrid" ────────► both in parallel → GPT-4o synthesis
+```
+
+### Router design
+
+The router is a stateless classification function — it does not perform retrieval and has no memory
+of previous calls. It adds one GPT-4o call to the request latency.
+
+The classification prompt describes each strategy:
+
+- `openai_graph` — best for semantic or contextual questions
+- `text2cypher` — best for entity lookups and structural queries
+- `hybrid` — best for questions that require both semantic understanding and structured facts
+
+GPT-4o returns a JSON object with `selected_strategy` and `router_reason`. Both are surfaced in the
+API response under the same field names.
+
+### Router observability
+
+`selected_strategy` and `router_reason` appear in the API response and the browser UI, making the
+routing decision fully transparent. If the router selects the wrong strategy, the reason field shows
+why, and the classification prompt can be adjusted accordingly.
+
+In production, log `selected_strategy` per request. Over a corpus of real queries, the distribution
+of strategies reveals whether the router is calibrated correctly — a workload dominated by structural
+queries should route heavily to `text2cypher`, not `openai_graph`.
+
+---
+
+## Hybrid Retrieval Architecture
+
+Hybrid mode runs both the GraphRAG pipeline and the Text2Cypher pipeline for the same question and
+merges their output before the final LLM synthesis call.
+
+```text
+Question
+    │
+    ├── GraphRAGPipeline.run() ─────────────────────────────────────┐
+    │       vector search + graph traversal                          │
+    │       → matched_chunks, graph_context, citations               │
+    │                                                                 ▼
+    └── Text2CypherService.run() ─────────────────────────► Merge contexts
+            LLM → Cypher → Neo4j records                            │
+            → generated_cypher, raw_query_results                   ▼
+                                                           GPT-4o synthesis
+                                                            (single answer
+                                                             from both contexts)
+```
+
+The response includes all fields from both retrievers simultaneously. The UI renders both GraphRAG
+result sections (Phase 1 / Phase 2 / Decision / Citations) and Text2Cypher result sections (Generated
+Cypher / Raw Query Results).
+
+### Why hybrid can outperform pure GraphRAG
+
+GraphRAG Phase 1 finds semantically similar chunks. For questions that target a specific named entity,
+the semantic signal may be weak — the nearest chunks describe the concept in general, not the specific
+applicant. Text2Cypher fetches the exact entity records directly. Hybrid gives GPT-4o both the
+conceptual context and the specific structured facts.
+
+### Why hybrid can outperform pure Text2Cypher
+
+Text2Cypher returns raw records without semantic context. If the question requires reasoning about
+*what a rule means* rather than *which records match*, the raw records alone may not be sufficient.
+GraphRAG provides the manual text and rule context that turns raw records into an interpretable
+reasoning chain.
 
 ---
 
@@ -177,20 +406,20 @@ provider.embed(text: str) -> list[float]   # returns float[1536]
 provider.model_name                         # "mock" | "text-embedding-3-small"
 ```
 
-`GraphRAGPipeline.for_mode(driver, mode)` in `app/graphrag_pipeline.py` wires the correct
-provider for each mode — `MockEmbeddingProvider` for Learning Mode (`"demo"`), `OpenAIEmbeddingProvider` for
-OpenAI Mode (`"openai"`). The pipeline never checks env vars at query time; the mode parameter is explicit.
+`GraphRAGPipeline.for_mode(driver, mode)` wires the correct provider for each mode —
+`MockEmbeddingProvider` for Learning Mode, `OpenAIEmbeddingProvider` for OpenAI Mode. The pipeline
+never checks environment variables at query time; the mode parameter is explicit.
 
-**Embedding consistency — automatic from Step 10 onwards:**
-The model name is stored on every `DocumentChunk` node at seed time (`embedding_model` property).
-Before each query, `_auto_reseed_if_needed()` in `main.py` reads that stored name and compares
-it to the active provider's `model_name`. If they differ, `reindex_embeddings()` re-embeds all
-chunks using the correct provider before the query runs — no manual intervention required.
+**Automatic re-indexing on provider switch:**
+The active model name is stored on every `DocumentChunk` node at seed time (`embedding_model`
+property). Before each query, `_auto_reseed_if_needed()` reads the stored name and compares it to the
+active provider's `model_name`. If they differ, `reindex_embeddings()` re-embeds all chunks using the
+correct provider before the query runs — no manual intervention required.
 
-`GraphRetriever._check_embedding_compatibility()` still performs a final check and returns a
-warning string if the models still differ after the auto-reindex attempt (e.g. because the
-reindex itself failed due to an API error). The `compatibility_warning` field in the API
-response carries this warning to the client; the UI displays it as an amber banner.
+`GraphRetriever._check_embedding_compatibility()` performs a final check and returns a warning string
+if the models still differ after the auto-reindex attempt (e.g., because the reindex itself failed
+due to an API error). The `compatibility_warning` field in the API response carries this warning to
+the client; the UI displays it as an amber banner.
 
 ---
 
@@ -203,48 +432,53 @@ llm.generate_answer(question: str, context: dict) -> dict
 # returns {decision, reasoning, supporting_rules, risk_factors, citations}
 ```
 
-`GraphRAGPipeline.for_mode(driver, mode)` returns the pipeline wired with the correct LLM:
-`MockLLM` for Learning Mode (`"demo"`), `OpenAILLM` for OpenAI Mode (`"openai"`). The pipeline, API response shape, and
-citation format are identical in both modes.
+`GraphRAGPipeline.for_mode(driver, mode)` returns the pipeline wired with the correct LLM: `MockLLM`
+for Learning Mode, `OpenAILLM` for OpenAI Mode. The pipeline, API response shape, and citation format
+are identical in both modes.
 
-`OpenAILLM` uses `response_format={"type": "json_object"}` (JSON mode) so the response
-is always valid JSON. The system prompt instructs the model to base its answer only on
-the retrieved context and to use `REQUIRE_ADDITIONAL_REVIEW` when context is insufficient.
+`OpenAILLM` uses `response_format={"type": "json_object"}` (JSON mode) so the response is always
+valid JSON. The system prompt instructs the model to base its answer only on the retrieved context
+and to use `REQUIRE_ADDITIONAL_REVIEW` when context is insufficient.
+
+### MockLLM
+
+MockLLM provides deterministic local validation of the retrieval pipeline without requiring
+external API calls. Its purpose is to verify:
+
+- retrieval quality
+- graph traversal
+- context assembly
+- citation generation
+
+without incurring model cost.
+
+For production-style reasoning, `OpenAILLM` uses GPT-4o and structured JSON responses while
+preserving the same API contract.
 
 ---
 
-## MockLLM
+## User Interface Layer
 
-The MockLLM reads `risk_factors` from the context dict by name (case-insensitive substring)
-and applies a three-branch decision tree:
+The UI (`static/index.html`, `styles.css`, `app.js`) is a thin visualisation layer over the API.
+It calls `POST /ask` and renders all pipeline stages — Phase 1 chunks, Phase 2 graph context,
+decision badge, citations, Generated Cypher card, Raw Query Results card, and the router reason
+callout for Auto Mode.
 
-| Condition detected | Decision |
-|--------------------|----------|
-| Type 2 Diabetes + Controlled A1C | `REFER_FOR_REVIEW` |
-| Type 2 Diabetes alone | `REQUIRE_ADDITIONAL_REVIEW` |
-| Neither | `APPROVE` |
+Design constraints:
 
-It also builds `citations` — a list linking each DocumentChunk source (manual section) and
-each UnderwritingRule (decision logic node) back to the answer. This is the explainability
-artefact: every reasoning step has a traceable source in the graph.
+- No framework dependencies (no React, no build tools, no npm) — zero setup friction
+- No CDN dependencies — fully functional offline once the server is running
+- No WebSockets — a single fetch per question is sufficient for this access pattern
+- `StaticFiles` mount at `/static`, `FileResponse` at `/` — two lines in FastAPI
+- `aiofiles` is the only additional dependency; required by FastAPI's `StaticFiles`
 
-In production, this function is replaced by:
-
-```python
-response = openai_client.chat.completions.create(
-    model="gpt-4o",
-    response_format={"type": "json_object"},
-    messages=[{"role": "user", "content": build_prompt(question, context)}],
-)
-```
-
-The context dict shape is unchanged. The LLM receives structured input, not raw text chunks.
+The API (`/ask`, `/health`) is the primary surface. The UI is optional scaffolding on top.
 
 ---
 
 ## API Layer
 
-### Lifespan — one driver, two pipelines, one lock
+### Lifespan — one driver, multiple pipelines, one lock
 
 ```python
 @asynccontextmanager
@@ -256,30 +490,37 @@ async def lifespan(app: FastAPI):
         "demo":   GraphRAGPipeline.for_mode(driver, "demo"),
         "openai": GraphRAGPipeline.for_mode(driver, "openai"),  # only if OPENAI_API_KEY set
     }
+    if OPENAI_API_KEY:
+        app.state.t2c_service      = Text2CypherService(driver)
+        app.state.auto_router      = RetrievalRouter()
+        app.state.auto_synthesizer = HybridSynthesizer()
     yield
     driver.close()                                     # closed cleanly at shutdown
 ```
 
-The Neo4j driver maintains an internal connection pool. Opening it once and sharing across
-requests is correct; creating a new driver per request would exhaust connections under load.
+The Neo4j driver maintains an internal connection pool. Opening it once and sharing across requests
+is correct; creating a new driver per request would exhaust connections under load. When
+`OPENAI_API_KEY` is set, `Text2CypherService`, `RetrievalRouter`, and `HybridSynthesizer` are also
+initialized at startup and stored in `app.state`.
 
-The `asyncio.Lock` serialises embedding re-index operations: if two requests arrive
-simultaneously after a mode switch, only the first acquires the lock and re-indexes;
-the second re-checks inside the lock and skips the re-index because it is already done.
+The `asyncio.Lock` serialises embedding re-index operations: if two requests arrive simultaneously
+after a mode switch, only the first acquires the lock and re-indexes; the second re-checks inside the
+lock and skips the re-index because it is already complete.
 
 ### Error handling
 
 | Exception | HTTP code | Meaning for caller |
-|-----------|-----------|-------------------|
+| --- | --- | --- |
 | Blank question | 400 | Fix the request |
 | `ServiceUnavailable` / `AuthError` | 503 | Backend down — retry later |
-| Unexpected `Exception` | 500 | Server bug — not caller's fault |
+| Unexpected `Exception` | 500 | Server error — not caller's fault |
 
 ### Response shape
 
 ```json
 {
   "question": "...",
+  "mode": "auto",
   "decision": "REFER_FOR_REVIEW",
   "reasoning": ["...", "..."],
   "supporting_rules": [{"id": "...", "title": "...", "decision": "..."}],
@@ -295,52 +536,136 @@ the second re-checks inside the lock and skips the re-index because it is alread
     "policies": 1,
     "applicants": 1
   },
-  "mode": "demo",
-  "embedding_provider": "mock",
-  "llm_provider": "MockLLM",
+  "embedding_provider": "text-embedding-3-small",
+  "llm_provider": "OpenAILLM",
   "compatibility_warning": null,
-  "reindexed": false
+  "reindexed": false,
+  "matched_chunks": [{"id": "chunk_001", "source": "Underwriting Manual v3.2", "text": "...", "score": 0.93}],
+  "graph_context": {"rules": [], "risk_factors": [], "policies": [], "applicants": []},
+  "generated_cypher": "MATCH (a:Applicant {name: 'John Smith'})-[:HAS_CONDITION]->(rf) RETURN rf.name",
+  "raw_query_results": [{"rf.name": "Type 2 Diabetes"}, {"rf.name": "Controlled A1C"}],
+  "selected_strategy": "hybrid",
+  "router_reason": "The question requires both specific entity data and semantic rule interpretation.",
+  "retrieval_strategy": null
 }
 ```
 
-`retrieval_summary` — zero values signal retrieval failure without inspecting the full response.
-`reindexed: true` — set on the first request after a mode switch; signals that embeddings were
-automatically re-indexed before the query ran.
-`compatibility_warning` — non-null only when auto-reindex was attempted but failed.
+Field notes:
+
+- `retrieval_summary` — zero values signal retrieval failure without inspecting the full response
+- `reindexed: true` — set on the first request after a provider switch; signals embeddings were re-indexed
+- `compatibility_warning` — non-null only when auto-reindex was attempted but failed
+- `matched_chunks` / `graph_context` — populated for GraphRAG and Hybrid responses; empty list / empty object for Text2Cypher-only responses
+- `generated_cypher` / `raw_query_results` — present whenever Text2Cypher retrieval participates in the response (Text2Cypher Mode, Auto Mode with `text2cypher` strategy, or Auto Mode with `hybrid` strategy); null or empty otherwise
+- `selected_strategy` / `router_reason` — present for `auto` mode only; null for all other modes
+- `retrieval_strategy` — `null` for Learning Mode and OpenAI Mode; set for Text2Cypher Mode (`"Text2Cypher"`) and all Auto Mode paths (`"openai_graph"`, `"text2cypher"`, or `"Hybrid"` depending on the router decision)
 
 ---
 
-## How This Maps to Production GraphRAG
+## Mode Comparison
 
-| Learning Mode | OpenAI Mode | Production |
-|-----------|-------------|------------|
-| `MockEmbeddingProvider` — SHA-256 hash | `OpenAIEmbeddingProvider` — `text-embedding-3-small` | Same as OpenAI Mode, or self-hosted model |
-| `MockLLM` — Python decision tree | `OpenAILLM` — gpt-4o with JSON mode | enterprise-approved LLM |
-| 1 applicant, 4 rules, 4 chunks | Same data | Thousands of nodes |
-| Single Uvicorn worker | Same | Multiple workers behind a load balancer |
-| No auth | Same | JWT / API key via FastAPI `Depends()` |
-| stdout logging | Same | Structured JSON logs + `retrieval_summary` metrics |
+| Component | Learning Mode | OpenAI Mode | Text2Cypher Mode | Auto Mode |
+| --- | --- | --- | --- | --- |
+| Embeddings | SHA-256 hash (not semantic) | `text-embedding-3-small` | None | `text-embedding-3-small` (if routed to graph) |
+| LLM | Deterministic Python logic | `gpt-4o` | `gpt-4o` | `gpt-4o` (router + answer) |
+| Retrieval | Vector search + graph | Vector search + graph | NL → Cypher → graph records | Router-selected: graph / cypher / hybrid |
+| Graph traversal | Yes | Yes | No (direct Cypher execution) | Depends on selected strategy |
+| API key needed | No | Yes | Yes | Yes |
+| Cost | Zero | OpenAI API charges apply | OpenAI API charges apply | OpenAI API charges apply |
 
-OpenAI Mode is already implemented. Switching requires only `OPENAI_API_KEY` in `.env`; embeddings
-re-index automatically on the first request in that mode. The graph schema, traversal query,
-context assembly, and API contract are unchanged across all three columns.
-The production path is a substitution, not a rewrite.
+The graph schema, traversal query, context assembly, and API contract are unchanged across modes.
+Transitioning to production is a substitution and hardening exercise — the graph model and retrieval
+architecture are already production-equivalent.
+
+---
+
+## Production Considerations
+
+### Authentication
+
+The API is currently unauthenticated. For production deployment, add authentication middleware before
+network exposure — OAuth 2.0 / JWT validation at the FastAPI layer, or a reverse proxy (API Gateway,
+Azure APIM, NGINX) handling token verification upstream.
+
+### Observability
+
+Log the following fields per request for operational visibility:
+
+- `mode`, `selected_strategy` — routing distribution across strategies
+- `embedding_provider`, `llm_provider` — model tracking across deployments
+- `retrieval_summary.matched_chunks`, `rules` — retrieval quality signals
+- `generated_cypher` — Text2Cypher auditability
+- Request latency broken down by phase (embed / search / traverse / LLM)
+
+LangSmith or equivalent LLM tracing integrations can capture prompt/response pairs, token counts, and
+latency per LLM call — useful for detecting prompt degradation over time.
+
+### Evaluation and golden datasets
+
+Retrieval quality is not detectable from latency alone. Establish a golden evaluation dataset of
+questions with known correct answers and run it periodically to detect:
+
+- Router miscalibration — wrong strategy selected for a given question type
+- Embedding drift — a model upgrade changes similarity rankings
+- Cypher generation degradation — generated queries produce wrong or empty results
+
+### Router evaluation
+
+Monitor `selected_strategy` distribution over production traffic. A workload dominated by structural
+queries should route heavily to `text2cypher`. If `openai_graph` dominates, the classification prompt
+may need adjustment. Log `router_reason` alongside `selected_strategy` to identify systematic
+misclassifications.
+
+### Prompt versioning
+
+The schema grounding prompt for Text2Cypher and the strategy description prompt for the router are
+load-bearing. Version them alongside application code — a prompt change is a code change. Any update
+to node labels, property names, or relationship types requires a corresponding update to the schema
+prompt.
+
+### Cost controls
+
+Auto Mode and Hybrid Mode issue multiple GPT-4o calls per request (router classification, retrieval,
+and synthesis for Hybrid). In production:
+
+- Cache router decisions for identical or near-identical questions
+- Gate Hybrid Mode behind explicit user intent rather than automatic routing for cost-sensitive
+  workloads
+- Monitor token consumption per request; set per-session spending limits at the application layer
+
+### Neo4j Aura deployment
+
+For production, replace the local Docker Compose instance with Neo4j Aura (managed service). Update
+`NEO4J_URI` in `.env` to the Aura connection string. The application code requires no changes — the
+driver factory reads from environment variables at startup.
+
+### Graph schema evolution
+
+Any change to the graph schema — new node labels, relationship types, or properties — requires
+updating:
+
+- `app/seed.py` — data population
+- `app/graph_retriever.py` — GraphRAG traversal query
+- `app/text2cypher_service.py` — schema grounding prompt
+- `CYPHER_QUERIES.md` — validation queries
 
 ---
 
 ## Known Limitations
 
-1. **Mock embeddings are not semantic.** Similarity scores cluster near 0.5. The pipeline
-   retrieves chunks, but not necessarily the *most relevant* ones. Step ordering in output
-   is hash-determined, not meaning-determined.
+1. **Learning Mode embeddings are not semantic.** SHA-256 hash embeddings produce similarity scores
+   that cluster near 0.5 regardless of question relevance. The pipeline retrieves chunks, but not
+   necessarily the most relevant ones. This is intentional — it allows the full retrieval pipeline to
+   be exercised and verified without an OpenAI API key.
 
-2. **MockLLM does not generalise.** It hard-codes diabetes/A1C business logic. A question
-   about tobacco classification will retrieve tobacco-related chunks but the LLM branch
-   reads risk factor names, so the output depends on what the traversal returned.
+2. **MockLLM is deterministic by design.** It validates retrieval quality, graph traversal, context
+   assembly, and citation generation without requiring external API calls. It is not intended to
+   replicate the reasoning breadth, contextual understanding, or adaptability of GPT-4o. Learning
+   Mode therefore validates the retrieval architecture and response contract, while OpenAI Mode
+   provides production-style reasoning over the same graph context.
 
-3. **One applicant scenario.** The seed data models one person (John Smith, age 48) and
-   four rules. Multi-applicant retrieval (e.g., "which of our applicants need additional
-   review?") is not yet implemented.
+3. **Single-applicant seed data.** The seed data models one applicant (John Smith, age 48) with four
+   underwriting rules. Multi-applicant retrieval (e.g., "which of our applicants need additional
+   review?") is valid in the graph model but not exercised by the current seed data.
 
-4. **No auth.** The API is unauthenticated. For any real deployment, add authentication
-   before exposing to the network.
+4. **No authentication.** The API is unauthenticated. See Production Considerations above.
